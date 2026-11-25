@@ -138,11 +138,17 @@ stderr saying so, and runs them. The refusals:
 | The probe's connect was made, or failed some other way | every guarded system | `the probe's connection to 192.0.2.1:9 was made`, or `failed, but not with the guard's` | `TestTheProbeFailsAGuardThatHoldsNothing` |
 | The probe cannot reach loopback | every guarded system | `the probe could not reach its listener on loopback` | none: no guard of testkit's closes loopback |
 
+On Linux the rerun's `GODEBUG` ends with `netdns=go`, after any settings you gave it. So the test
+binary, and a Go program it starts with that environment, look names up with Go's own resolver, which
+fails under the guard.
+
 What it does not promise: a red test where the code under test swallows the error. Also outside the
-guard is a daemon reached over a Unix socket, which connects for itself: Docker's socket, or on Linux
-the C library's resolver through nscd or systemd-resolved. On macOS the sandbox counts every address
-of the host as localhost, so a connect to one of the host's own addresses is allowed. No packet of it
-leaves the machine.
+guard is a daemon reached over a Unix socket, such as Docker's, which connects for itself. On Linux a
+program a test starts that is not Go may look a name up through the C library, whose resolver can
+reach nscd or systemd-resolved over a Unix socket and so carry the name out. Its connections still
+fail. On macOS the sandbox counts every address of the host as localhost, so a connect to one of the
+host's own addresses is allowed: a service the host runs on `0.0.0.0` is reachable through any of its
+addresses, as it is through loopback. No packet of it leaves the machine.
 
 ## Systems
 

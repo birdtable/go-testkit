@@ -91,7 +91,7 @@ func guardFirst(start []string) (code int, done bool, why string, err error) {
 	defer func() { _ = r.Close() }() //nolint:errcheck // a pipe read to its line
 	uid, gid := os.Getuid(), os.Getgid()
 	cmd := exec.Command(self, os.Args[1:]...) //nolint:gosec,noctx // this test binary, with the arguments go test gave it; it ends with the signals passed on and its parent's death
-	cmd.Env = append(withoutGuardVar(start), fmt.Sprintf("%s=%s:%d:%d:%s", guardVar, guardInit, uid, gid, outer))
+	cmd.Env = append(withGoResolver(withoutGuardVar(start)), fmt.Sprintf("%s=%s:%d:%d:%s", guardVar, guardInit, uid, gid, outer))
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr //nolint:forbidigo // the run's own streams, handed on as they are
 	cmd.ExtraFiles = []*os.File{w}
 	// The caller's ids are root of the new user namespace, which owns the network namespace, so the root
@@ -260,6 +260,23 @@ func withoutGuardVar(environ []string) []string {
 		}
 	}
 	return out
+}
+
+// withGoResolver is environ with netdns=go after the GODEBUG settings it has, which it keeps, as the last
+// of a setting wins: the rerun's Go programs look names up with Go's own resolver, which the guard
+// refuses, and not the C library's, which may reach a daemon over a Unix socket.
+func withGoResolver(environ []string) []string {
+	out, debug := make([]string, 0, len(environ)+1), ""
+	for _, kv := range environ {
+		if v, ok := strings.CutPrefix(kv, "GODEBUG="); ok {
+			if debug = ""; v != "" {
+				debug = v + ","
+			}
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "GODEBUG="+debug+"netdns=go")
 }
 
 // guardRerunEnv gives a child of Rerun the guard this run is in, so it checks itself against it and is

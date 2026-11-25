@@ -42,7 +42,11 @@ import (
 // and network namespace, loopback brought up, the ready pipe and the passing on of signals (272);
 // nonetwork_windows.go and nonetwork_other.go are the refusal elsewhere (17 each); and doc.go's
 // paragraph names it (1). The .s trampolines are not Go lines.
-const Ceiling = 5762
+//
+// Raised by 19 to 5781, by measure, for NoNetwork's Go resolver on Linux: nonetwork_linux.go's
+// withGoResolver appends netdns=go to the rerun's GODEBUG, keeping the caller's settings (17), and
+// nonetwork.go's doc says so and narrows the limit to programs that are not Go (2).
+const Ceiling = 5781
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

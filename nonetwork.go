@@ -26,7 +26,9 @@ import (
 // Main reruns the test binary in a user and network namespace of its own, where only loopback is up: its
 // first child, root of that namespace, brings loopback up, and runs the tests as its own child in a
 // nested user namespace, with the caller's uid and gid and no capability. Main returns their exit code.
-// The rerun is handed on by RerunEnv, so a child of Rerun is already inside and does not nest again.
+// The rerun is handed on by RerunEnv, so a child of Rerun is already inside and does not nest again. The
+// rerun's GODEBUG ends with netdns=go, after the settings the caller gave it, so the test binary and a
+// Go program it starts with that environment look a name up with Go's own resolver, which fails there.
 //
 // Where the guard cannot be set, or the probe fails, Main returns 1 and an error that names the system
 // and the reason, and no test runs. Windows gives an unprivileged process no way to refuse outbound
@@ -40,17 +42,17 @@ import (
 //
 // What it does not promise: that a test goes red where the code under test swallows the error, as
 // nothing counts the refused connections; that a daemon the test reaches over a Unix socket (Docker's
-// socket, or on Linux the C library's resolver through nscd or systemd-resolved) stays off the network,
-// as the daemon connects for itself, outside the guard; and on Linux the resolver of a test binary
-// built with cgo is such a case, while Go's own resolver is refused; and on macOS that a connect to
-// one of the host's own addresses fails, as the sandbox's localhost is every address of the host and
-// its profile names no narrower one, so such a connect is allowed, as loopback is, and no packet of it
-// leaves the machine. GoOffline is still worth giving
-// beside it: a go a test starts is held by the guard too, and GoOffline makes it fail with go's own
-// message instead of a refused connection. The guard is tested on macOS arm64 and Linux amd64; on
-// macOS amd64 it is built and vetted only. Where Go stops allowing the libSystem call by name (see
-// nonetwork_darwin.go), the build fails; a run under /usr/bin/sandbox-exec -p with the same profile,
-// as a Before, is the way out.
+// socket) stays off the network, as the daemon connects for itself, outside the guard; on Linux, that a
+// program a test starts that is not Go looks no name up: the C library's resolver may reach nscd or
+// systemd-resolved over a Unix socket and so carry the name out, though the program's connections
+// still fail; and on macOS, that a connect to one of the host's own addresses fails: the sandbox's
+// localhost is every address of the host, and its profile names no narrower one, so a service the host
+// runs on 0.0.0.0 is reachable through any address of the host, as it is through loopback, and no
+// packet of it leaves the machine. GoOffline is still worth giving beside it: a go a test starts is
+// held by the guard too, and GoOffline makes it fail with go's own message instead of a refused
+// connection. The guard is tested on macOS arm64 and Linux amd64; on macOS amd64 it is built and vetted
+// only. Where Go stops allowing the libSystem call by name (see nonetwork_darwin.go), the build fails;
+// a run under /usr/bin/sandbox-exec -p with the same profile, as a Before, is the way out.
 func NoNetwork(unguardedOn ...string) Option {
 	unguarded := slices.Clone(unguardedOn)
 	return Options(

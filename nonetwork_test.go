@@ -84,8 +84,9 @@ func guardReport(mode, addr string) int {
 		_ = r.Body.Close()
 	}
 	say("client", err)
-	netns, _ := os.Readlink("/proc/self/ns/net") // empty where there is no such link, off Linux
-	fmt.Printf("netns: %s\n", netns)             //nolint:forbidigo // as above
+	netns, _ := os.Readlink("/proc/self/ns/net")      // empty where there is no such link, off Linux
+	fmt.Printf("netns: %s\n", netns)                  //nolint:forbidigo // as above
+	fmt.Printf("godebug: %s\n", os.Getenv("GODEBUG")) //nolint:forbidigo // as above
 	if mode == modeInner || mode == modeAccepted {
 		return 0
 	}
@@ -153,6 +154,12 @@ func listenLoopback(t *testing.T) net.Listener {
 // first when it has any, and is its exit code and its lines, and its stderr's apart.
 func runGuard(t *testing.T, wrap []string, mode, addr, refusal string) (int, map[string]string, string) {
 	t.Helper()
+	return runGuardEnv(t, nil, wrap, mode, addr, refusal)
+}
+
+// runGuardEnv is runGuard with env after this process's environment, so env's settings win.
+func runGuardEnv(t *testing.T, env, wrap []string, mode, addr, refusal string) (int, map[string]string, string) {
+	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -163,6 +170,9 @@ func runGuard(t *testing.T, wrap []string, mode, addr, refusal string) (int, map
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // this test binary, or the system's sandbox-exec running it
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	code := 0
 	if err := cmd.Run(); err != nil {
 		exit, ok := err.(*exec.ExitError) //nolint:errorlint // Run's own error type, never wrapped
