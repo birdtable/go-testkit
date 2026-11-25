@@ -1,7 +1,10 @@
 package testkit
 
 import (
+	"archive/tar"
+	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -312,5 +315,61 @@ func TestBuildAtUnderGoOfflineFailsAModuleTheCacheLacksAndNamesIt(t *testing.T) 
 		if strings.Contains(res.Stderr, d) {
 			t.Errorf("the build printed %q, and GoOffline fetches nothing:\n%s", d, res.Stderr)
 		}
+	}
+}
+
+// TestUnpackRefusesAnEntryThatLeavesItsFolderOrIsOfAnotherKind: untar, which writes a BuildAt's tree,
+// refuses an entry whose path climbs out of its folder, a file written through a link that points out
+// of it, an absolute link it would follow, and an entry of a kind git archive does not write, a
+// character device, and writes nothing outside its folder for any of them. The planted red of each
+// row is untar returning nil.
+//
+// What it costs when this fails: a tree with a crafted path or link writes outside the build's
+// folder, over a file of the person's.
+func TestUnpackRefusesAnEntryThatLeavesItsFolderOrIsOfAnotherKind(t *testing.T) {
+	t.Parallel()
+	ran := 0
+	for _, tc := range []struct {
+		row     string
+		entries []tar.Header
+	}{
+		{"a path that climbs out", []tar.Header{{Name: "../outside", Typeflag: tar.TypeReg, Mode: 0o644}}},
+		{"a file through a link out", []tar.Header{{Name: "out", Typeflag: tar.TypeSymlink, Linkname: ".."}, {Name: "out/outside", Typeflag: tar.TypeReg, Mode: 0o644}}},
+		{"a file through an absolute link", []tar.Header{{Name: "abs", Typeflag: tar.TypeSymlink, Linkname: "/"}, {Name: "abs/outside", Typeflag: tar.TypeReg, Mode: 0o644}}},
+		{"a character device", []tar.Header{{Name: "dev", Typeflag: tar.TypeChar, Mode: 0o644}}},
+	} {
+		ran++
+		parent := t.TempDir()
+		into := filepath.Join(parent, "tree")
+		if err := os.Mkdir(into, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		for _, h := range tc.entries {
+			if err := tw.WriteHeader(&h); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := tw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		root, err := os.OpenRoot(into)
+		if err != nil {
+			t.Fatal(err)
+		}
+		uerr := untar(root, &buf)
+		if err := root.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if uerr == nil {
+			t.Errorf("%s: untar gave nil, want a refusal", tc.row)
+		}
+		if _, err := os.Lstat(filepath.Join(parent, "outside")); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s: untar wrote outside its folder: %v", tc.row, err)
+		}
+	}
+	if ran != 4 {
+		t.Fatalf("ran %d rows, want 4", ran)
 	}
 }
