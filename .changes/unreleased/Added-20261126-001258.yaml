@@ -1,0 +1,3 @@
+kind: Added
+body: 'NoNetwork, an option of Main: it holds the test process and every process it starts to loopback, by the system sandbox on macOS and a user and network namespace on Linux, proves the guard with a probe before any test runs, and fails the run where the guard cannot be set unless the caller names the system.'
+time: 2026-11-26T00:12:58.033404+01:00

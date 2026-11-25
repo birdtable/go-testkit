@@ -69,6 +69,12 @@ jobs:
           go vet ./...
           (cd contain && go vet ./...)
           (cd taskfile && go vet ./...)
+      # A pull request runs no macOS job, and macOS's runner is arm64, so this vets the root module for
+      # darwin/amd64 on Linux: NoNetwork's amd64 trampoline (nonetwork_darwin_amd64.s), which no runner
+      # tests, is vetted by CI on every pull request and not only by the push tier.
+      - name: go vet for darwin/amd64
+        if: runner.os == 'Linux'
+        run: GOOS=darwin GOARCH=amd64 go vet ./...
       # go test runs as the release tier runs it, with the race detector, in shuffled order and never
       # from the test cache, and writes its events as JSON for the step after it to count. Each of
       # the three modules runs whether or not one before it failed, and the step is red if any did.

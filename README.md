@@ -108,6 +108,50 @@ tool := fake.Program(t, t.TempDir(), "tool", fake.PrintArgs(), fake.Exit(3))
 Run `tool` as you would the real thing. It prints its arguments and exits 3, and no shell reads it.
 A product adds steps of its own through `fake.Custom` and `fake.From`.
 
+## No network
+
+`testkit.NoNetwork()` holds the test process, and every process it starts, to loopback:
+
+```go
+code, err := testkit.Main(m, testkit.NoNetwork())
+```
+
+A dial to any other address fails with an error that names it, and an `httptest` server works.
+Main sets the guard before any test runs, and proves it: a connect to `192.0.2.1:9` must be refused
+by the guard, and one to a listener on `127.0.0.1` must succeed. On macOS the guard is the system
+sandbox, set on the test process with `sandbox_init`. On Linux the test binary reruns in a user and
+network namespace of its own, with only loopback up. The guard is tested on macOS arm64 and Linux
+amd64. On macOS amd64 it is not tested: it is vetted by CI on every pull request, and built by the
+push tier.
+
+Where the guard cannot be set, no test runs, and Main's error says why. `NoNetwork("windows")` names
+a system where you accept running the tests with the network open. There Main prints one line to
+stderr saying so, and runs them. The refusals:
+
+| Refusal | Where | Main's error says | Test |
+|---|---|---|---|
+| A name in `NoNetwork(...)` that is no GOOS | every system | `"macos", which is no GOOS` | `TestNoNetworkRefusesANameThatIsNoGOOS` |
+| The system has no guard | Windows, and all but macOS and Linux | `Windows gives an unprivileged process no way to refuse outbound connections and keep loopback` | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
+| The process already runs in a sandbox | macOS (`sandbox-exec`, an agent's sandboxed shell) | `sandbox_init refused the profile`, and that the process already runs inside a sandbox | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
+| The host refuses an unprivileged user namespace | Linux | `the system refused the namespace` | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
+| Loopback does not come up in the new namespace | Linux (Ubuntu's `kernel.apparmor_restrict_unprivileged_userns=1`) | `loopback could not be brought up in the new network namespace` | `TestALoopbackThatWillNotComeUpRefusesTheGuard` |
+| The new namespace is the run's own | Linux | `the new network namespace is the one the run started in` | `TestAGuardLeftInTheRunsNetworkNamespaceRefuses` |
+| The probe's connect was made, or failed some other way | every guarded system | `the probe's connection to 192.0.2.1:9 was made`, or `failed, but not with the guard's` | `TestTheProbeFailsAGuardThatHoldsNothing` |
+| The probe cannot reach loopback | every guarded system | `the probe could not reach its listener on loopback` | none: no guard of testkit's closes loopback |
+
+On Linux the rerun's `GODEBUG` ends with `netdns=go`, after any settings you gave it. So the test
+binary, and a Go program it starts with that environment, look names up with Go's own resolver, which
+fails under the guard.
+
+What it does not promise: a red test where the code under test swallows the error. Also outside the
+guard is a daemon reached over a Unix socket, such as Docker's, or on macOS over a mach service, such
+as nsurlsessiond for a background URL session: the daemon connects for itself. On Linux a
+program a test starts that is not Go may look a name up through the C library, whose resolver can
+reach nscd or systemd-resolved over a Unix socket and so carry the name out. Its connections still
+fail. On macOS the sandbox counts every address of the host as localhost, so a connect to one of the
+host's own addresses is allowed: a service the host runs on `0.0.0.0` is reachable through any of its
+addresses, as it is through loopback. No packet of it leaves the machine.
+
 ## Systems
 
 Each release is tested on macOS (arm64), Linux (amd64) and Windows (amd64), and built and vetted
