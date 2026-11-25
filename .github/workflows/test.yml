@@ -1,0 +1,60 @@
+# Runs go vet and go test on GitHub's hosted runners, on Linux, macOS and Windows, for every pull
+# request, every push to main, and by hand, in each of the repository's three modules: the root,
+# contain and taskfile, each in its own folder. It holds no secret, and its token reads the
+# repository's contents alone. Every module is fetched through the public Go module proxy, as a
+# program that imports go-testkit fetches them, and nothing is kept in the Actions cache.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      GOFLAGS: -mod=mod
+      GOPROXY: https://proxy.golang.org,direct
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Ubuntu's runners keep an unprivileged account from mapping itself in a new user namespace
+      # (AppArmor's restrict_unprivileged_userns), which contain's Linux tests need, as a stock Linux
+      # allows: those of contain_linux_test.go, mounts_linux_test.go and rerun_linux_test.go make a
+      # user and PID namespace, and skip without one. This lifts that rule on the runner alone; the
+      # tests still run as the runner's own account, with no root.
+      - name: allow unprivileged user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # cmd/apigate's tests build apidiff from tools/apidiff.mod with the network off, as a test
+      # binary under testkit's GoOffline does, so its modules are fetched first.
+      - name: fetch apidiff's modules
+        run: go mod download -modfile=tools/apidiff.mod
+      - name: go vet
+        run: |
+          go vet ./...
+          (cd contain && go vet ./...)
+          (cd taskfile && go vet ./...)
+      - name: go test
+        run: |
+          go test ./...
+          (cd contain && go test ./...)
+          (cd taskfile && go test ./...)
