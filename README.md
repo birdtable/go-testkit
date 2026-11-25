@@ -143,7 +143,8 @@ binary, and a Go program it starts with that environment, look names up with Go'
 fails under the guard.
 
 What it does not promise: a red test where the code under test swallows the error. Also outside the
-guard is a daemon reached over a Unix socket, such as Docker's, which connects for itself. On Linux a
+guard is a daemon reached over a Unix socket, such as Docker's, or on macOS over a mach service, such
+as nsurlsessiond for a background URL session: the daemon connects for itself. On Linux a
 program a test starts that is not Go may look a name up through the C library, whose resolver can
 reach nscd or systemd-resolved over a Unix socket and so carry the name out. Its connections still
 fail. On macOS the sandbox counts every address of the host as localhost, so a connect to one of the
