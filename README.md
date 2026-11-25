@@ -1,4 +1,10 @@
-<p align="center"><img src="docs/mark/testkit-light.svg" alt="testkit" width="96"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/mark/go-testkit-banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/mark/go-testkit-banner-light.svg">
+    <img src="docs/mark/go-testkit-banner-light.svg" width="327" alt="go-testkit">
+  </picture>
+</p>
 
 # testkit
 
