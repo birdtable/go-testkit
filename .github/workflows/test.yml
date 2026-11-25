@@ -1,8 +1,9 @@
 # Runs go vet and go test on GitHub's hosted runners, on Linux, macOS and Windows, for every pull
 # request, every push to main, and by hand, in each of the repository's three modules: the root,
 # contain and taskfile, each in its own folder. It holds no secret, and its token reads the
-# repository's contents alone. Every module is fetched through the public Go module proxy, as a
-# program that imports go-testkit fetches them, and nothing is kept in the Actions cache.
+# repository's contents alone. Every module is fetched by go's defaults, through the public Go module
+# proxy, as a program that imports go-testkit fetches them, and nothing is kept in the Actions cache.
+# go keeps its default -mod=readonly, so a go.mod or go.sum that is not tidy is refused.
 name: test
 
 on:
@@ -22,16 +23,16 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    env:
-      GOFLAGS: -mod=mod
-      GOPROXY: https://proxy.golang.org
     defaults:
       run:
         shell: bash
     steps:
+      # The whole history and its tags: internal/contract's tests read each module's last tag with git
+      # describe, and fail in a shallow clone.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
