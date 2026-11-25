@@ -35,7 +35,12 @@ import (
 // Raised by 12 to 5234, by measure, for doc lines alone: contain, taskfile and cmd/apigate each say
 // what they are built on, what they add and what the caller configures (14 lines), and two comments
 // lose a line each where an issue citation came out.
-const Ceiling = 5234
+//
+// Raised by 211 to 5445, by measure, for BuildAt, which builds a program at an earlier commit for an
+// upgrade test: buildat.go is 183, the ref and package refusals, git rev-parse and git archive
+// unpacked through an os.Root, and its doc; binary.go adds 28, compile building a BuildAt's tree from
+// its folder with GOWORK=off, and modRoot and importPath, which resolve and BuildAt share.
+const Ceiling = 5445
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
