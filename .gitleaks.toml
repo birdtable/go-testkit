@@ -1,0 +1,23 @@
+# gitleaks' own rules, and two it has no rule for: an assigned password, key or token, and a
+# docker login's auth. `task secrets` scans the committed history with this file.
+title = "testkit"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "assigned-secret-value"
+description = "A password, API key, secret or token written into a file as a quoted value of 12 or more characters"
+regex = '''(?i)\b(?:password|passwd|api_?key|secret|token)\s*[:=]\s*["'][^"'\s]{12,}["']'''
+keywords = ["password", "passwd", "api_key", "apikey", "secret", "token"]
+
+[[rules]]
+id = "docker-login-auth"
+description = "A docker login's auth, base64 of the user and the password, as config.json keeps it"
+regex = '''"auth"\s*:\s*"[A-Za-z0-9+/=]{16,}"'''
+keywords = ["\"auth\""]
+
+# A go.sum line is a module's checksum, a hash that the generic key rule reads as a key.
+[[allowlists]]
+description = "module checksum files"
+paths = ['''(^|/)go\.sum$''', '''^tools/[^/]+\.sum$''']

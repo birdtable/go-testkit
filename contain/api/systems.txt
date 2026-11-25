@@ -1,0 +1,3 @@
+# What contain's cross-system gate expects (gate/api.sh): apidiff's report of darwin's
+# surface against each other system's, a line each, sorted. contain has the same surface on every
+# system, so the file has no line; a difference is red until a line here says the module means it.

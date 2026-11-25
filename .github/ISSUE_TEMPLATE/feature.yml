@@ -1,0 +1,38 @@
+name: Feature
+description: Something testkit does not do that your tests need.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        No answer time is promised.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What you are trying to do
+      description: The thing your tests need, not only the API you want. A need can often be met another way.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How you do it today
+      description: What you use now, and where it falls short.
+    validations:
+      required: true
+  - type: textarea
+    id: api
+    attributes:
+      label: The API you have in mind
+      description: Optional. A sketch of the call you would make.
+      render: go
+    validations:
+      required: false
+  - type: input
+    id: system
+    attributes:
+      label: Systems
+      description: The operating systems and processors it is needed on.
+      placeholder: Linux and macOS, on amd64 and arm64
+    validations:
+      required: true

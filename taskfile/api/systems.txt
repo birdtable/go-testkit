@@ -1,0 +1,4 @@
+# The exported surface's differences between the systems that task taskfile-api holds (cmd/apigate):
+# apidiff's full report from darwin to linux and from darwin to windows, each line led by the system and
+# a tab. taskfile has the same surface on every system, so the file holds no line; a difference is red
+# until a line here says the module means it. Lines starting with # are not compared.

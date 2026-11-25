@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="t d">
+  <title id="t">testkit</title>
+  <desc id="d">A glass bell jar over a coral check: each test runs under its own cover. Drawn larger, for small sizes.</desc>
+  <rect width="256" height="256" rx="56" fill="#22264A"/><g transform="translate(128 128) scale(1.1) translate(-128 -128)"><path d="M80 178 V122 A48 48 0 0 1 176 122 V178" fill="none" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" stroke="#FFF6EC"/><path d="M62 186 H194" fill="none" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" stroke="#FFF6EC"/><path d="M128 74 V62" fill="none" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" stroke="#FFF6EC"/><path d="M106 140 L122 156 L152 124" fill="none" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" stroke="#E8735A"/></g>
+</svg>

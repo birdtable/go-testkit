@@ -1,0 +1,633 @@
+version: "3"
+
+# The tools are pinned in tools/<tool>.mod and built by go tool on first use;
+# nothing is installed on the machine. A tier is a task whose members run together
+# (deps:), each member with a timeout: on its cmds line, never under a minute
+# and at least three times the member's measured time, so a first run that builds the
+# pinned tool fits too. A member waits only for one it needs; none of these needs
+# another, so none waits. Each tier's budget step is gate/budget.sh, which has hatch budget
+# hold it to its budget in budgets.yaml: the commit and release tiers by their elapsed seconds,
+# the push tier by its members' CPU time. hatch is pinned in tools/hatch.mod and called through
+# go tool, as test calls hatch tests. The tiers are go-proc's, which
+# testkit's code came from.
+#
+# CGO_ENABLED is written in front of each command that builds or tests, 0 for vet,
+# build and lint and 1 for the race test, because a value in the shell beats one in
+# this file's env. The tests' GORACE gets atexit_sleep_ms=0 after whatever the shell
+# gives it: the tests start the race-built test binary as their helpers, and each
+# helper's exit would otherwise be held a second.
+#
+# The push tier runs the tests with -short: a row that waits out a real deadline skips
+# there with a message that begins "release tier: ", and runs in the release tier's
+# task test, the whole suite with no skip.
+
+env:
+  GOWORK: "off"
+
+vars:
+  TOOL: go tool -modfile=tools
+  # TASKFILE_TOOL is TOOL for the taskfile members, which run in taskfile/, one folder below tools/.
+  TASKFILE_TOOL: go tool -modfile=../tools
+  GORACE_TESTS: '${GORACE:+$GORACE }atexit_sleep_ms=0'
+  # MORE_SYSTEMS are the systems each module's vet, build and lint read beyond linux, darwin and
+  # windows, each with its one port: aix, illumos and solaris, where a library that lints its tests
+  # there builds against testkit, so a break there is red here. No test
+  # runs there; HoldRead skips with NoHold, as Go's syscall package has no Mkfifo there.
+  MORE_SYSTEMS: aix/ppc64 illumos/amd64 solaris/amd64
+  # CONTAIN_WORK opens each command of a contain member. contain is a module of its own beside the root
+  # whose go.mod requires the root at v0.2.0, which no proxy holds before the tag,
+  # so the member writes a workspace file outside the tree
+  # that uses both folders and replaces that one version with this tree's root. Without the replace, go
+  # still reads v0.2.0's go.mod, which is not there. Its folder is named by the task as well as $$, which
+  # go-task's shell gives every member of a tier alike, as they run side by side. The file pins the root's
+  # toolchain, so a tool built for the root reads the same standard library. It is removed when the
+  # command ends; nothing of it is committed. The member then runs in contain/.
+  CONTAIN_WORK: |
+    w="${TMPDIR:-${TEMP:-/tmp}}/testkit-contain-$$-{{.TASK}}"
+    rm -rf "$w"; mkdir -p "$w" || exit 1
+    trap 'rm -rf "$w"' EXIT
+    (cd "$w" && GOWORK= go work init "{{.ROOT_DIR}}" "{{.ROOT_DIR}}/contain" \
+      && GOWORK= go work edit -go=1.27.1 -toolchain=go1.27.4 -replace="github.com/birdtable/go-testkit@v0.2.0={{.ROOT_DIR}}") \
+      || { echo "contain: the workspace file could not be written in $w" >&2; exit 1; }
+    export GOWORK="$w/go.work"
+    cd "{{.ROOT_DIR}}/contain"
+
+tasks:
+  default:
+    desc: list the tasks
+    cmds:
+      - go tool -modfile=tools/task.mod task --list
+
+  hooks:
+    desc: point git at hooks/, once per clone
+    cmds:
+      - cmd: git config core.hooksPath hooks
+        timeout: 1m
+
+  fmt:
+    desc: fail on a file gofmt would change
+    cmds:
+      - cmd: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt would change:"; echo "$out"; exit 1; fi
+        timeout: 1m
+
+  # vet also type-checks linux/mips64le, where syscall.Stat_t.Dev is 32 bits, not the 64 of every
+  # system above: a compare of st.Dev with a uint64 that has no conversion then fails the tier, not a
+  # consumer's build. Vet type-checks every file, so the build matrix need not take it.
+  vet:
+    desc: go vet for each system, MORE_SYSTEMS too, and linux/mips64le for its 32-bit Stat_t.Dev
+    cmds:
+      - for: { matrix: { OS: [linux, darwin, windows], ARCH: [amd64, arm64] } }
+        cmd: CGO_ENABLED=0 GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go vet ./...
+        timeout: 5m
+      - for: { var: MORE_SYSTEMS, split: ' ' }
+        cmd: CGO_ENABLED=0 GOOS={{dir .ITEM}} GOARCH={{base .ITEM}} go vet ./...
+        timeout: 5m
+      - cmd: CGO_ENABLED=0 GOOS=linux GOARCH=mips64le go vet ./...
+        timeout: 5m
+
+  build:
+    desc: go build for each system, MORE_SYSTEMS too
+    cmds:
+      - for: { matrix: { OS: [linux, darwin, windows], ARCH: [amd64, arm64] } }
+        cmd: CGO_ENABLED=0 GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build ./...
+        timeout: 5m
+      - for: { var: MORE_SYSTEMS, split: ' ' }
+        cmd: CGO_ENABLED=0 GOOS={{dir .ITEM}} GOARCH={{base .ITEM}} go build ./...
+        timeout: 5m
+
+  # lint holds the root and the module taskfile, each for the three systems and MORE_SYSTEMS, all at once:
+  # taskfile's lints ran one after another in a member of their own, which made it the push tier's
+  # longest member but the tests. The lint is built once, for this host, as go tool with
+  # GOOS set would build it for that system; taskfile/ finds the root's .golangci.yml above it.
+  lint:
+    desc: golangci-lint of the root and taskfile, for each of the three systems and MORE_SYSTEMS, run together
+    cmds:
+      - cmd: |
+          bin=$(CGO_ENABLED=0 go tool -modfile=tools/golangci-lint.mod -n golangci-lint) || exit 1
+          pids=""
+          for os in linux darwin windows; do
+            CGO_ENABLED=0 GOOS=$os "$bin" run --allow-parallel-runners ./... &
+            pids="$pids $!"
+            (cd taskfile && CGO_ENABLED=0 GOOS=$os "$bin" run --allow-parallel-runners ./...) &
+            pids="$pids $!"
+          done
+          for p in {{.MORE_SYSTEMS}}; do
+            CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} "$bin" run --allow-parallel-runners ./... &
+            pids="$pids $!"
+            (cd taskfile && CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} "$bin" run --allow-parallel-runners ./...) &
+            pids="$pids $!"
+          done
+          bad=0
+          for p in $pids; do wait "$p" || bad=1; done
+          exit $bad
+        timeout: 10m
+
+  workflows:
+    desc: actionlint over the workflows, with no shellcheck or pyflakes, so it reads the same on every machine
+    cmds:
+      - cmd: '{{.TOOL}}/actionlint.mod actionlint -shellcheck= -pyflakes='
+        timeout: 10m
+
+  # warm builds what the release tier builds and runs no test, so a host with an empty build cache
+  # (a hosted runner) compiles nothing inside a timed member:
+  # the packages and their tests for each system vet, build and lint read, the race test binaries
+  # (built, not run), and each pinned tool for both CGO_ENABLED values. No tier calls it, and it is
+  # not timed. The race binaries go to the system's temporary folder, named by the shell's pid, never
+  # into the module.
+  warm:
+    desc: build what the release tier builds, each tool too, and run no test; not timed, and no tier calls it
+    cmds:
+      - for: { matrix: { OS: [linux, darwin, windows], ARCH: [amd64, arm64] } }
+        cmd: CGO_ENABLED=0 GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go list -export -test -deps ./... > /dev/null
+        timeout: 10m
+      - for: { var: MORE_SYSTEMS, split: ' ' }
+        cmd: CGO_ENABLED=0 GOOS={{dir .ITEM}} GOARCH={{base .ITEM}} go list -export -test -deps ./... > /dev/null
+        timeout: 10m
+      - cmd: CGO_ENABLED=0 GOOS=linux GOARCH=mips64le go list -export -test -deps ./... > /dev/null
+        timeout: 10m
+      - cmd: |
+          d="${TMPDIR:-${TEMP:-/tmp}}/testkit-warm-$$"
+          mkdir -p "$d" || exit 1
+          CGO_ENABLED=1 go test -race -c -o "$d/" ./...
+          rc=$?
+          rm -rf "$d"
+          exit $rc
+        timeout: 10m
+      - cmd: |
+          for cgo in 0 1; do
+            for mod in tools/*.mod; do
+              tool=$(basename "$mod" .mod)
+              CGO_ENABLED=$cgo go tool -modfile="$mod" -n "$tool" > /dev/null || exit 1
+            done
+          done
+        timeout: 10m
+
+  # graph holds the root module to the standard library: go lists the modules
+  # the build takes, and the root alone is the whole list. A require in go.mod, of a library of
+  # birdtable's or of anyone's, is a second line or go's own error, and red either way. go mod graph
+  # is not the judge: with no require it still prints the go and toolchain lines.
+  # example runs the second consumer, testkit's and fake's main paths through the exported API with
+  # values unlike ours, red wherever a package fills in a value of ours, and the README's quick start.
+  example:
+    desc: the second-consumer example, with values unlike ours
+    cmds:
+      - cmd: CGO_ENABLED=0 go test -count=1 ./internal/example/...
+        timeout: 2m
+
+  # api is the API gate of the root module, cmd/apigate's: the systems alike, the breaks since the last
+  # tag and the marks, as a library runs it. It runs in the push tier and the
+  # release tier, as contain-api and taskfile-api do.
+  api:
+    desc: the root's three systems differ as api/systems.txt says, the breaks since the last tag are api/breaks/<version>.txt's, and api/marks.txt names what is there
+    cmds:
+      - cmd: go run ./cmd/apigate
+        timeout: 2m
+
+  # size is go-proc's task size for testkit: Go counts the lines, so the member is one go run line.
+  # It runs in the commit tier, and in the push and release tiers, so a pull request past the
+  # ceiling fails at its own head and a tag is held to it.
+  size:
+    desc: print the non-test Go lines of each module outside internal/ and their total, and fail with the total above internal/cmd/measure's Ceiling
+    cmds:
+      - cmd: CGO_ENABLED=0 go run ./internal/cmd/measure size
+        timeout: 2m
+
+  graph:
+    desc: the root module requires nothing, so go list -m all prints the root alone
+    cmds:
+      - cmd: |
+          got=$(go list -m all) || { echo "graph: go could not list the modules the root takes" >&2; exit 1; }
+          if [ "$got" != "github.com/birdtable/go-testkit" ]; then
+            echo "graph: the root module takes more than itself, and it imports the standard library only:" >&2
+            echo "$got" >&2
+            exit 1
+          fi
+        timeout: 2m
+
+  # test is judged by hatch tests: a failure, no test run, or any test skipped is red, the
+  # skipped named. It holds the stream, prints it on a red and drops it on a green, and kills the
+  # run, tree and all, at its --timeout. go test's own -timeout is under hatch's and hatch's under
+  # the member's, so a test that hangs is reported by go test, with every goroutine's stack, before
+  # either kills the run. hatch counts leaf tests only, so a parent that calls t.Skip after its
+  # subtests passed is not red here; testkit has none. test-short keeps its own judge: hatch has no
+  # rule for a skip that says it runs in the release tier.
+  test:
+    desc: the whole suite with the race detector, shuffled, and no skip, judged by hatch tests; the release tier's
+    cmds:
+      - cmd: GORACE="{{.GORACE_TESTS}}" CGO_ENABLED=1 {{.TOOL}}/hatch.mod hatch tests --timeout 9m --red-when failed,none-ran,any-skipped --green-word passed --red-word failed -count=1 -race -shuffle=on -timeout 8m ./...
+        timeout: 10m
+
+  # test-short is the push tier's suite: -race and -short, with neither -count=1 nor -shuffle,
+  # either of which keeps go test from its cache, so a package whose test binary and the files
+  # and variables its tests read are unchanged is not run again. task test,
+  # the release tier's, runs every package every time, shuffled. Its json goes to the system's
+  # temporary folder, named by the shell's pid, never into the module: a file the run writes there
+  # while the tests read the module's tree changes what they read, and go test then runs their
+  # packages again every time. test-short skips only a row that says it runs in the release
+  # tier. Each skipped test is matched with its own output, by package and name, and a skip
+  # whose output holds no line beginning "release tier: " fails the run, as any skip fails
+  # task test.
+  test-short:
+    desc: the suite with the race detector and -short, from the test cache where nothing changed; a skip passes only if it says it runs in the release tier
+    cmds:
+      - cmd: |
+          f="${TMPDIR:-${TEMP:-/tmp}}/testkit-test-short-$$.json"
+          GORACE="{{.GORACE_TESTS}}" CGO_ENABLED=1 {{.TOOL}}/gotestsum.mod gotestsum --format testname --jsonfile "$f" -- -race -short ./... || { rm -f "$f"; exit 1; }
+          unmarked=$(awk '
+            match($0, /"Package":"[^"]*","Test":"[^"]*"/) {
+              key = substr($0, RSTART, RLENGTH)
+              if ($0 ~ /"Action":"skip"/) skipped[key] = 1
+              if ($0 ~ /"Action":"output"/ && $0 ~ /"Output":"    [^"]*_test\.go:[0-9]+: release tier: /) marked[key] = 1
+            }
+            END { for (k in skipped) if (!(k in marked)) print k }' "$f")
+          rm -f "$f"
+          if [ -n "$unmarked" ]; then
+            echo "a test skipped that does not say it runs in the release tier; a skip is a failure here:"
+            echo "$unmarked"
+            exit 1
+          fi
+        timeout: 5m
+
+  # gitleaks git passes, having scanned 0 commits, where git reads no history:
+  # a tree taken from a tarball, or a .git it may not read. So secrets asks git
+  # first, by git's own exit, and fails with a line that says why; gitleaks'
+  # own exit then decides the scan.
+  secrets:
+    desc: gitleaks over the committed history. Fails where this tree has no history of its own to scan.
+    cmds:
+      - cmd: |
+          why=""
+          if ! top="$(git rev-parse --show-cdup 2>/dev/null)"; then
+            why="git reads no repository here (no .git, or one it may not read)"
+          elif [ -n "$top" ]; then
+            why="the repository git reads is a folder above this tree, not the tree's own"
+          elif ! git rev-parse --verify --quiet 'HEAD^{commit}' >/dev/null; then
+            why="the repository has no commit"
+          fi
+          if [ -n "$why" ]; then
+            echo "secrets: no history to scan: $why, and gitleaks would pass having scanned 0 commits" >&2
+            exit 1
+          fi
+        timeout: 1m
+      - cmd: '{{.TOOL}}/gitleaks.mod gitleaks git --config .gitleaks.toml --no-banner .'
+        timeout: 10m
+
+  secrets-staged:
+    desc: gitleaks over the staged files
+    cmds:
+      - cmd: '{{.TOOL}}/gitleaks.mod gitleaks git --staged --config .gitleaks.toml --no-banner .'
+        timeout: 10m
+
+  vuln:
+    desc: govulncheck over the module
+    cmds:
+      - cmd: '{{.TOOL}}/govulncheck.mod govulncheck ./...'
+        timeout: 10m
+
+  verify:
+    desc: go mod verify, and go mod tidy would change nothing
+    cmds:
+      - cmd: go mod verify
+        timeout: 2m
+      - cmd: go mod tidy -diff
+        timeout: 2m
+
+  # mod is the push tier's vuln and verify: both run where go.mod or go.sum differ from the
+  # commit this branch shares with origin/main, or where git names no such commit, and otherwise
+  # wait for the release tier, which runs both every time. git diff reads
+  # the working tree, so an edit not yet committed counts as a change.
+  mod:
+    desc: vuln and verify, where go.mod or go.sum differ from main's; otherwise the release tier runs them
+    cmds:
+      - cmd: |
+          base=$(git merge-base HEAD origin/main 2>/dev/null) || base=""
+          if [ -n "$base" ] && git diff --quiet "$base" -- go.mod go.sum; then
+            echo "mod: go.mod and go.sum are as at $base, so vuln and verify run in the release tier"
+            exit 0
+          fi
+          {{.TOOL}}/task.mod task vuln verify
+        timeout: 10m
+
+  # The root takes no module, so go-licenses has only the root's own licence to read; the row is
+  # here so the first module a sub-module of this repo takes is read by the tier that ships it.
+  licenses:
+    desc: every dependency's licence is one we may ship
+    cmds:
+      - cmd: '{{.TOOL}}/go-licenses.mod go-licenses check ./... --allowed_licenses=BSD-2-Clause,BSD-3-Clause,MIT,Apache-2.0,ISC'
+        timeout: 10m
+
+  changelog:
+    desc: changie reads its config and the changes folder, and parses every file in .changes/unreleased, so a broken entry fails the gate; an empty unreleased folder passes
+    cmds:
+      - cmd: '{{.TOOL}}/changie.mod changie latest'
+        timeout: 10m
+      # latest reads only the released versions, so an unreleased entry that does not parse passed it. A dry-run
+      # batch parses each one and writes nothing: no file is written and no fragment is deleted. It is run only
+      # when a fragment is there: changie fails on a folder with none, absent or empty, as a cut leaves it.
+      - cmd: 'if ls .changes/unreleased/*.yaml > /dev/null 2>&1; then {{.TOOL}}/changie.mod changie batch patch --dry-run > /dev/null; fi'
+        timeout: 10m
+
+  # The contain members are the root's members for the module contain, each opened by
+  # CONTAIN_WORK. A tool is built for the root, where -modfile works, and run in contain/, where the
+  # workspace file is in force and -modfile is refused.
+  contain-vet:
+    desc: go vet of contain for each system, MORE_SYSTEMS too, and linux/mips64le
+    cmds:
+      - cmd: |
+          {{.CONTAIN_WORK}}
+          bad=0
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              CGO_ENABLED=0 GOOS=$os GOARCH=$arch go vet ./... || bad=1
+            done
+          done
+          for p in {{.MORE_SYSTEMS}}; do
+            CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go vet ./... || bad=1
+          done
+          CGO_ENABLED=0 GOOS=linux GOARCH=mips64le go vet ./... || bad=1
+          exit $bad
+        timeout: 5m
+
+  contain-build:
+    desc: go build of contain for each system, MORE_SYSTEMS too, and on this one with cgo, which links libcap/psx's C
+    cmds:
+      - cmd: |
+          {{.CONTAIN_WORK}}
+          bad=0
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build ./... || bad=1
+            done
+          done
+          for p in {{.MORE_SYSTEMS}}; do
+            CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go build ./... || bad=1
+          done
+          CGO_ENABLED=1 go build ./... || bad=1
+          exit $bad
+        timeout: 5m
+
+  contain-lint:
+    desc: golangci-lint of contain for each of the three systems and MORE_SYSTEMS, run together, with the root's configuration
+    cmds:
+      - cmd: |
+          bin=$(CGO_ENABLED=0 go tool -modfile=tools/golangci-lint.mod -n golangci-lint) || exit 1
+          {{.CONTAIN_WORK}}
+          pids=""
+          for os in linux darwin windows; do
+            CGO_ENABLED=0 GOOS=$os "$bin" run --allow-parallel-runners ./... &
+            pids="$pids $!"
+          done
+          for p in {{.MORE_SYSTEMS}}; do
+            CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} "$bin" run --allow-parallel-runners ./... &
+            pids="$pids $!"
+          done
+          bad=0
+          for p in $pids; do wait "$p" || bad=1; done
+          exit $bad
+        timeout: 10m
+
+  # contain-deps is contain's graph before the tag: on each
+  # system, with the tests, contain takes testkit, libcap/cap and libcap/psx and no other module, and so
+  # no golang.org/x/sys. go mod graph, go mod tidy -diff and go mod verify are read with
+  # GOWORK=off at the commit that adds go-testkit v0.2.0's lines to contain/go.sum, after the tag.
+  contain-deps:
+    desc: contain takes testkit, libcap/cap and libcap/psx alone, on every system, by go list -deps
+    cmds:
+      - cmd: |
+          {{.CONTAIN_WORK}}
+          bad=0
+          for os in linux darwin windows; do
+            got=$(GOOS=$os go list -deps -test -f '{{"{{"}}with .Module{{"}}"}}{{"{{"}}.Path{{"}}"}}{{"{{"}}end{{"}}"}}' ./... | sort -u) || { echo "contain-deps: go could not list what contain takes on $os" >&2; exit 1; }
+            other=$(printf '%s\n' "$got" | grep -v -x -e github.com/birdtable/go-testkit -e github.com/birdtable/go-testkit/contain -e kernel.org/pub/linux/libs/security/libcap/cap -e kernel.org/pub/linux/libs/security/libcap/psx || true)
+            if [ -n "$other" ]; then
+              echo "contain-deps: on $os contain takes a module beyond testkit, libcap/cap and libcap/psx:" >&2
+              echo "$other" >&2
+              bad=1
+            fi
+          done
+          exit $bad
+        timeout: 2m
+
+  contain-test:
+    desc: contain's suite with the race detector, shuffled, and no skip, judged by hatch tests; the release tier's
+    cmds:
+      - cmd: |
+          bin=$(go tool -modfile=tools/hatch.mod -n hatch) || exit 1
+          {{.CONTAIN_WORK}}
+          GORACE="{{.GORACE_TESTS}}" CGO_ENABLED=1 "$bin" tests --timeout 9m --red-when failed,none-ran,any-skipped --green-word passed --red-word failed -count=1 -race -shuffle=on -timeout 8m ./...
+        timeout: 10m
+
+  # contain-test-short is the push tier's: contain holds no row that waits out a deadline, so -short
+  # skips nothing, and any skip is red, as in contain-test.
+  contain-test-short:
+    desc: contain's suite with the race detector and -short, judged by hatch tests
+    cmds:
+      - cmd: |
+          bin=$(go tool -modfile=tools/hatch.mod -n hatch) || exit 1
+          {{.CONTAIN_WORK}}
+          GORACE="{{.GORACE_TESTS}}" CGO_ENABLED=1 "$bin" tests --timeout 4m --red-when failed,none-ran,any-skipped --green-word passed --red-word failed -race -short -timeout 3m ./...
+        timeout: 5m
+
+  contain-vuln:
+    desc: govulncheck over contain and what it takes
+    cmds:
+      - cmd: |
+          bin=$(go tool -modfile=tools/govulncheck.mod -n govulncheck) || exit 1
+          {{.CONTAIN_WORK}}
+          "$bin" ./...
+        timeout: 10m
+
+  # contain takes libcap/cap and libcap/psx under the permissive half of their licence: each one's licence
+  # file reads "SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0-only", and go-licenses reports the
+  # GPL-2.0 half too. testkit takes them under BSD-3-Clause and copies none of their code into its own,
+  # as go-proc takes psx. go-licenses ignores by
+  # string prefix, so the first command fails on any package under that prefix whose module is not one of
+  # the two: the ignore reaches those two modules and no other.
+  contain-licenses:
+    desc: every module contain takes is under a licence we may ship
+    vars:
+      LIBCAP: kernel.org/pub/linux/libs/security/libcap
+    cmds:
+      - cmd: |
+          bin=$(go tool -modfile=tools/go-licenses.mod -n go-licenses) || exit 1
+          {{.CONTAIN_WORK}}
+          deps=$(GOOS=linux go list -deps -f '{{"{{"}}if .Module{{"}}"}}{{"{{"}}.ImportPath{{"}}"}} {{"{{"}}.Module.Path{{"}}"}}{{"{{"}}end{{"}}"}}' ./...) || exit 1
+          other=$(printf '%s\n' "$deps" | awk -v m='{{.LIBCAP}}/' 'index($1, m) == 1 && $2 != m "cap" && $2 != m "psx"')
+          if [ -n "$other" ]; then
+            echo "contain-licenses: a package under {{.LIBCAP}}'s path that is not of libcap/cap or libcap/psx, which the ignore would pass:" >&2
+            echo "$other" >&2
+            exit 1
+          fi
+          GOOS=linux "$bin" check ./... --allowed_licenses=BSD-2-Clause,BSD-3-Clause,MIT,Apache-2.0,ISC --ignore {{.LIBCAP}}/cap --ignore {{.LIBCAP}}/psx
+        timeout: 10m
+
+  # contain-mod is the push tier's contain-vuln, run where contain/go.mod or contain/go.sum differ from
+  # the commit this branch shares with origin/main, or where git names none, as mod is the root's.
+  contain-api:
+    desc: the API gate of contain, gate/api.sh's, from contain/api/
+    cmds:
+      - cmd: |
+          {{.CONTAIN_WORK}}
+          mod=contain; . "{{.ROOT_DIR}}/gate/api.sh"
+        timeout: 2m
+
+  contain-mod:
+    desc: contain-vuln, where contain's go.mod or go.sum differ from main's; otherwise the release tier runs it
+    cmds:
+      - cmd: |
+          base=$(git merge-base HEAD origin/main 2>/dev/null) || base=""
+          if [ -n "$base" ] && git diff --quiet "$base" -- contain/go.mod contain/go.sum; then
+            echo "contain-mod: contain's go.mod and go.sum are as at $base, so contain-vuln runs in the release tier"
+            exit 0
+          fi
+          {{.TOOL}}/task.mod task contain-vuln
+        timeout: 10m
+
+  # The taskfile members are the root's members for the module taskfile, run in taskfile/. taskfile
+  # requires no version of the root, so a member needs no workspace file: each is one go command, or
+  # one pinned tool, for each system by go-task's for:. Its own tests read this Taskfile.yml and its
+  # taskfile-exceptions.txt, so taskfile-check, the one test, runs in the commit tier.
+  taskfile-check:
+    desc: this Taskfile.yml calls Go, but for the commands taskfile-exceptions.txt keeps in shell with their reasons
+    dir: taskfile
+    cmds:
+      - cmd: CGO_ENABLED=0 go test -count=1 -run '^TestTestkitsOwnTaskfilePassesOrListsItsExceptions$' .
+        timeout: 2m
+
+  taskfile-vet:
+    desc: go vet of taskfile for each system, MORE_SYSTEMS too, and linux/mips64le
+    dir: taskfile
+    cmds:
+      - for: { matrix: { OS: [linux, darwin, windows], ARCH: [amd64, arm64] } }
+        cmd: CGO_ENABLED=0 GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go vet ./...
+        timeout: 5m
+      - for: { var: MORE_SYSTEMS, split: ' ' }
+        cmd: CGO_ENABLED=0 GOOS={{dir .ITEM}} GOARCH={{base .ITEM}} go vet ./...
+        timeout: 5m
+      - cmd: CGO_ENABLED=0 GOOS=linux GOARCH=mips64le go vet ./...
+        timeout: 5m
+
+  taskfile-build:
+    desc: go build of taskfile for each system, MORE_SYSTEMS too
+    dir: taskfile
+    cmds:
+      - for: { matrix: { OS: [linux, darwin, windows], ARCH: [amd64, arm64] } }
+        cmd: CGO_ENABLED=0 GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build ./...
+        timeout: 5m
+      - for: { var: MORE_SYSTEMS, split: ' ' }
+        cmd: CGO_ENABLED=0 GOOS={{dir .ITEM}} GOARCH={{base .ITEM}} go build ./...
+        timeout: 5m
+
+  taskfile-test:
+    desc: taskfile's suite with the race detector, shuffled, and no skip, judged by hatch tests
+    dir: taskfile
+    cmds:
+      - cmd: GORACE="{{.GORACE_TESTS}}" CGO_ENABLED=1 {{.TASKFILE_TOOL}}/hatch.mod hatch tests --timeout 4m --red-when failed,none-ran,any-skipped --green-word passed --red-word failed -count=1 -race -shuffle=on -timeout 3m ./...
+        timeout: 5m
+
+  # taskfile-test-short is the push tier's: taskfile holds no row that waits out a deadline, so -short
+  # skips nothing, and any skip is red, as in taskfile-test.
+  taskfile-test-short:
+    desc: taskfile's suite with the race detector and -short, judged by hatch tests
+    dir: taskfile
+    cmds:
+      - cmd: GORACE="{{.GORACE_TESTS}}" CGO_ENABLED=1 {{.TASKFILE_TOOL}}/hatch.mod hatch tests --timeout 4m --red-when failed,none-ran,any-skipped --green-word passed --red-word failed -race -short -timeout 3m ./...
+        timeout: 5m
+
+  taskfile-vuln:
+    desc: govulncheck over taskfile and what it takes
+    dir: taskfile
+    cmds:
+      - cmd: '{{.TASKFILE_TOOL}}/govulncheck.mod govulncheck ./...'
+        timeout: 10m
+
+  taskfile-verify:
+    desc: go mod verify of taskfile, and go mod tidy would change nothing
+    dir: taskfile
+    cmds:
+      - cmd: go mod verify
+        timeout: 2m
+      - cmd: go mod tidy -diff
+        timeout: 2m
+
+  taskfile-licenses:
+    desc: every module taskfile takes is under a licence we may ship
+    dir: taskfile
+    cmds:
+      - cmd: '{{.TASKFILE_TOOL}}/go-licenses.mod go-licenses check ./... --allowed_licenses=BSD-2-Clause,BSD-3-Clause,MIT,Apache-2.0,ISC'
+        timeout: 10m
+
+  # taskfile-api runs cmd/apigate from the root, whose tools/apidiff.mod it builds, with -dir naming
+  # taskfile's folder: its tags are taskfile/v*, and its base is read at taskfile/ with GOWORK=off.
+  taskfile-api:
+    desc: the API gate of taskfile, cmd/apigate's, from taskfile/api/
+    cmds:
+      - cmd: go run ./cmd/apigate -dir taskfile
+        timeout: 2m
+
+  # taskfile-mod is the push tier's taskfile-vuln and taskfile-verify, run where taskfile/go.mod or
+  # taskfile/go.sum differ from the commit this branch shares with origin/main, or where git names none.
+  taskfile-mod:
+    desc: taskfile-vuln and taskfile-verify, where taskfile's go.mod or go.sum differ from main's; otherwise the release tier runs them
+    cmds:
+      - cmd: |
+          base=$(git merge-base HEAD origin/main 2>/dev/null) || base=""
+          if [ -n "$base" ] && git diff --quiet "$base" -- taskfile/go.mod taskfile/go.sum; then
+            echo "taskfile-mod: taskfile's go.mod and go.sum are as at $base, so taskfile-vuln and taskfile-verify run in the release tier"
+            exit 0
+          fi
+          {{.TOOL}}/task.mod task taskfile-vuln taskfile-verify
+        timeout: 10m
+
+  # Each tier's budget step is gate/budget.sh, its tier and step set here in literal words, as its
+  # comment says why: no start, load or tier rides a Task var, which the caller's environment would
+  # set over the tier's own. pre-commit and release start and end with it, and keep the start per
+  # run, so two runs of one tier each time themselves.
+  pre-commit:
+    desc: the tier a commit runs
+    cmds:
+      - cmd: tier=pre-commit; step=start; . ./gate/budget.sh
+        silent: true
+        timeout: 1m
+      - task: pre-commit-members
+      - cmd: tier=pre-commit; step=end; . ./gate/budget.sh
+        silent: true
+        timeout: 2m
+
+  pre-commit-members:
+    internal: true
+    deps: [fmt, vet, lint, workflows, secrets-staged, graph, size, example, taskfile-check]
+
+  # The push tier is one budget step, cpu: hatch budget --cpu runs task pre-push-members in a tree of
+  # its own and judges it by that tree's CPU time. A command line can start only a task that is not
+  # internal, so pre-push-members is public; run alone it is no claim of done. The step's timeout is
+  # above hatch's hang guard, ten times the 10 s wall row, so hatch, not go-task, names a hang.
+  pre-push:
+    desc: the tier a push runs, and the only claim of done
+    cmds:
+      - cmd: tier=pre-push; step=cpu; . ./gate/budget.sh
+        silent: true
+        timeout: 5m
+
+  pre-push-members:
+    desc: the push tier's members, which its budget step runs under hatch; alone, no claim of done
+    deps: [fmt, vet, lint, workflows, secrets-staged, build, graph, api, size, test-short, secrets, mod, contain-vet, contain-build, contain-lint, contain-deps, contain-test-short, contain-mod, contain-api, taskfile-vet, taskfile-build, taskfile-test-short, taskfile-mod, taskfile-api]
+
+  # The release tier takes the push tier's members, with task test, the whole suite, in
+  # place of test-short, and vuln and verify every time in place of mod.
+  release:
+    desc: the tier a release runs
+    cmds:
+      - cmd: tier=release; step=start; . ./gate/budget.sh
+        silent: true
+        timeout: 1m
+      - task: release-members
+      - cmd: tier=release; step=end; . ./gate/budget.sh
+        silent: true
+        timeout: 2m
+
+  release-members:
+    internal: true
+    deps: [fmt, vet, lint, workflows, secrets-staged, build, graph, api, size, test, secrets, vuln, verify, licenses, changelog, contain-vet, contain-build, contain-lint, contain-deps, contain-test, contain-vuln, contain-licenses, contain-api, taskfile-vet, taskfile-build, taskfile-test, taskfile-vuln, taskfile-verify, taskfile-licenses, taskfile-api]

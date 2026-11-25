@@ -1,0 +1,20 @@
+# The commands of Taskfile.yml that stay in shell, which the taskfile check (taskfile.Check) would
+# refuse. Each line is a task, the command's place in its cmds from 1, and the reason, tab-separated.
+# A line that starts with # and a blank line are not read. A line the check finds nothing in is red,
+# so a command moved to Go takes its line out with it.
+#
+# Each of these was shell before the check, and each is a tier member or the one command that warms
+# a cache: moving one to Go is its own change, with its own run on the three systems.
+lint	1	the lints of the root and of taskfile, for each system, run as processes at once and the member waits for each, which go-task's for: runs one after another
+warm	4	the race binaries go to a folder of their own under the system's temporary folder, named by the shell's pid, and are removed with it; go test -c writes into the folder -o names
+warm	5	each pinned tool under tools/ is built for both CGO_ENABLED values; the for loop names the files tools/ holds, so a new pin is warmed with no line here
+test-short	1	gotestsum's JSON goes to a file of its own under the system's temporary folder, and awk matches each skipped test with its own output, by package and name
+contain-vet	1	CONTAIN_WORK writes contain's workspace file in a folder of its own under the system's temporary folder, removed when the command ends, and the vet runs for each system
+contain-build	1	CONTAIN_WORK's workspace file, as contain-vet's, and the build runs for each system
+contain-lint	1	CONTAIN_WORK's workspace file, as contain-vet's, with the lint built for the root and run in contain/, where -modfile is refused, for each system at once, as lint's
+contain-deps	1	CONTAIN_WORK's workspace file, as contain-vet's, and grep reads go list's modules for each system against the four contain may take: testkit, contain itself, libcap/cap and libcap/psx
+contain-test	1	CONTAIN_WORK's workspace file, as contain-vet's, with hatch built for the root and run in contain/
+contain-test-short	1	CONTAIN_WORK's workspace file, as contain-vet's, with hatch built for the root and run in contain/
+contain-vuln	1	CONTAIN_WORK's workspace file, as contain-vet's, with govulncheck built for the root and run in contain/
+contain-licenses	1	CONTAIN_WORK's workspace file, as contain-vet's, and awk finds a package under libcap's path whose module is not libcap/cap or libcap/psx, which go-licenses' prefix ignore would pass
+contain-api	1	CONTAIN_WORK's workspace file, as contain-vet's, which gate/api.sh reads for the head and writes again for the base

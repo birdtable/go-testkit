@@ -1,0 +1,47 @@
+name: Bug
+description: testkit does something it should not, or does not do what its documentation says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A security problem is never reported here: report it privately, as SECURITY.md says. No answer time is promised.
+  - type: input
+    id: version
+    attributes:
+      label: testkit version
+      description: The version or commit, as `go list -m github.com/birdtable/go-testkit` prints it, and `github.com/birdtable/go-testkit/contain` too if the problem is in contain.
+      placeholder: github.com/birdtable/go-testkit v0.2.0
+    validations:
+      required: true
+  - type: input
+    id: go
+    attributes:
+      label: Go version
+      description: As `go version` prints it.
+      placeholder: go version go1.27.4 linux/amd64
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: The operating system, its version, and the processor.
+      placeholder: Linux 6.12 on amd64
+    validations:
+      required: true
+  - type: textarea
+    id: program
+    attributes:
+      label: The shortest test that shows it
+      description: A whole test file, with its TestMain, that someone else can run as it is.
+      render: go
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened, and what you expected
+      description: The output or the error, and what you expected in its place.
+    validations:
+      required: true

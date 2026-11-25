@@ -1,0 +1,15 @@
+# The exported surface's differences between the systems that task api holds (cmd/apigate): apidiff's
+# full report from darwin to linux and from darwin to windows, each line led by the system and a tab,
+# as task api prints it on a red. A line here is a difference the module means to have; any other is
+# red, and so is a line here that no longer happens. Lines starting with # are not compared.
+#
+# SocketPathMax is the longest Unix socket path, from syscall.RawSockaddrUnix, which is 104 bytes on
+# darwin and 108 on linux and windows: a fact of the system, as go-proc's testenv had it.
+#
+# aix, illumos and solaris are built, vetted and linted (MORE_SYSTEMS in Taskfile.yml), not compared
+# here. There HoldRead skips its test with NoHold, as Go's syscall package has no Mkfifo on them; it
+# never fails the test. NoHold is declared on every system.
+linux	Incompatible changes:
+linux	- SocketPathMax: value changed from 103 to 107
+windows	Incompatible changes:
+windows	- SocketPathMax: value changed from 103 to 107

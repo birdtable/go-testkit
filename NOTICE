@@ -1,0 +1,8 @@
+testkit
+Copyright (c) the testkit authors, under the licence in LICENSE.
+
+Its packages were first written as the testenv package of github.com/birdtable/go-proc (v0.11.0), by
+the same authors under the same licence, and were moved here unchanged in behaviour.
+
+It requires no modules: go.mod has no require. The tools pinned in tools/ are built by go tool for the
+gates alone and are in no build of testkit.

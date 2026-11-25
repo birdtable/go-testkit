@@ -1,0 +1,3 @@
+# contain's names that are not experimental, as "<package> <name> <mark>". A name this file does not
+# list is experimental, so before v1 it lists none.
+# gate/api.sh fails a line whose name go doc no longer finds.

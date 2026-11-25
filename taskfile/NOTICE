@@ -1,0 +1,12 @@
+testkit/taskfile
+Copyright (c) the testkit authors, under the licence in LICENSE.
+
+It requires two modules, and no module of birdtable's:
+
+- go.yaml.in/yaml/v3 v3.0.6, under MIT and Apache-2.0 (its LICENSE and NOTICE), which reads
+  Taskfile.yml.
+- mvdan.cc/sh/v3 v3.14.1, under BSD-3-Clause. taskfile imports its syntax package alone, whose parser
+  reads each command's shell as go-task's own interpreter, built on it, reads it; that package
+  imports the standard library only.
+
+go.sum also names the modules the syntax package's own tests take; none is in a build of taskfile.

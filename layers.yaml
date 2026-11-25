@@ -1,0 +1,56 @@
+# What each package of github.com/birdtable/go-testkit may import of the module, besides the
+# standard library. A package not listed imports nothing of the module. The tests of a package
+# may also import what tests-may names. The root package's path is a dot. A folder with a go.mod
+# of its own is another module (contain, taskfile): it has no row here, and no package here may import it.
+module: github.com/birdtable/go-testkit
+packages:
+  - path: .
+    role: leaf
+    job: the environment a test process and its children run in
+    may: [internal/homevars]
+    tests-may: []
+  - path: internal/homevars
+    role: leaf
+    job: testkit's own list of the home, temp and XDG_ names, kept equal to go-proc's
+    may: []
+    tests-may: []
+  - path: fake
+    role: leaf
+    job: a built stand-in program that does a list of steps, for a test that would plant a script
+    may: [.]
+    tests-may: []
+  - path: internal/fakeprogram
+    role: leaf
+    job: the default stand-in fake.Program builds, a main that calls fake.Main with no steps of its own
+    may: [fake]
+    tests-may: []
+  - path: cmd/apigate
+    role: command
+    job: the API gate of one module, the systems alike, the breaks since its last tag and its marks, as a library's task api runs it
+    may: []
+    tests-may: [.]
+  - path: internal/cmd/measure
+    role: command
+    job: the size of testkit's code, each module's non-test Go lines outside internal/ and their total, held to its Ceiling
+    may: []
+    tests-may: []
+  - path: internal/contract
+    role: leaf
+    job: each module's api/contract.txt, and the README's quick start, held in a test no package imports
+    may: []
+    tests-may: []
+  - path: internal/example/quickstart
+    role: example
+    job: the README's quick start, a TestMain that calls Main and one test, compiled and run as written
+    may: []
+    tests-may: [.]
+  - path: internal/example/secondconsumer
+    role: example
+    job: testkit as a second business uses it, through the exported API, with values unlike ours
+    may: []
+    tests-may: [., fake]
+  - path: internal/example/secondconsumer/sweep
+    role: example
+    job: the second consumer's own stand-in, fake.Main with a step of its own
+    may: [fake]
+    tests-may: []

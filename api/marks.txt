@@ -1,0 +1,3 @@
+# The root's names that are not experimental, as <package><tab><name><tab><mark>, the mark
+# a word other than experimental. A name this file does not list is experimental, so before v1 it lists
+# none. task api (cmd/apigate) fails a line whose name go doc no longer finds.

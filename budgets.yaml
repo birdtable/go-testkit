@@ -1,0 +1,26 @@
+# Each tier's budget and measured floor, in seconds. The budget is the ceiling: commit 2 s, push 10 s,
+# release 15 s on the host named below; it stands over any rule of floor times a factor. The floor is the least of
+# three runs of the tier on a quiet host of the kind named below, from a fresh clone, and is
+# kept beside its budget as the proof there is room. A tier that runs past its budget on that kind of host fails.
+# The release tier on a Linux or Windows amd64 host that is not a hosted runner (GITHUB_ACTIONS unset) has its own budget, release-budget-session.
+# On any other kind of host no budget applies, and the time is printed.
+# A hosted runner (GITHUB_ACTIONS set) has no budget: its run is held by the 20-minute timeout of its job.
+# gate/budget.sh reads the host line with awk, and hatch budget reads a budget row through its --row, a key, a
+# colon, a space and whole seconds; so the shape is narrow: a comment line, or a key, a colon and a number.
+# The push tier is judged by CPU time, not by the seconds above: gate/budget.sh runs its members under
+# hatch budget --cpu, which holds their user plus system time to pre-push-cpu_limit, the same at any load.
+# pre-push-budget is then its hang guard only: hatch kills the tier at ten times it. pre-push-cpu_limit is the
+# largest of three pushes on the host named below, with every test run (GOFLAGS=-count=1, the build and
+# module caches warm), times a factor of 2, rounded up to whole seconds: 113.1 s, 78.6 s and 73.6 s of CPU,
+# taking 12, 10 and 11 s at loads 10.8, 19.7 and 25.0, so 227. A push that changes a package reruns its
+# tests, so the row is measured with all of them run, not replayed from the cache. A run past it after a
+# cache clear or a toolchain or module bump is read before anyone raises it. The runs are on issue 41.
+host: Darwin-arm64
+pre-commit-floor: 1
+pre-commit-budget: 2
+pre-push-floor: 1
+pre-push-budget: 10
+release-floor: 1
+release-budget: 15
+release-budget-session: 60
+pre-push-cpu_limit: 227

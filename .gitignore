@@ -1,0 +1,7 @@
+/build/
+coverage.out
+*.test
+*.prof
+go.work
+go.work.sum
+/.task/
