@@ -1,19 +1,28 @@
-# Runs go vet and go test on GitHub's hosted runners, on Linux, macOS and Windows, for every pull
-# request, every push to main, and by hand, in each of the repository's three modules: the root,
-# contain and taskfile, each in its own folder. It holds no secret, and its token reads the
+# Runs go vet and go test on GitHub's hosted runners, in each of the repository's three modules: the
+# root, contain and taskfile, each in its own folder. A pull request runs on Linux and Windows; a push
+# to main, a tag and a run by hand run on macOS too. It holds no secret, and its token reads the
 # repository's contents alone. Every module is fetched by go's defaults, through the public Go module
 # proxy, as a program that imports go-testkit fetches them, and nothing is kept in the Actions cache.
 # go keeps its default -mod=readonly, so a go.mod or go.sum that is not tidy is refused.
 name: test
 
+# A tag runs the three jobs at the tagged sha, which is a release's proof: v* for the root module,
+# contain/v* and taskfile/v* for the nested ones.
 on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*', 'contain/v*', 'taskfile/v*']
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# A newer push to the same branch, pull request or tag cancels the run it supersedes, so its runners
+# are freed for the next one.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -21,6 +30,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        # The hosted macOS runners are a small pool that the organization's repositories share, and
+        # a job that waits for one can wait out its whole timeout. So a pull request leaves macOS out,
+        # and main, a tag and a run by hand test on it. On any other event this excludes no os.
+        exclude:
+          - os: ${{ github.event_name == 'pull_request' && 'macos-latest' || 'none' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
