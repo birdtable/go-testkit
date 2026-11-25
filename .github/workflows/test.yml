@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 30
     env:
       GOFLAGS: -mod=mod
-      GOPROXY: https://proxy.golang.org,direct
+      GOPROXY: https://proxy.golang.org
     defaults:
       run:
         shell: bash
@@ -39,13 +39,14 @@ jobs:
       # Ubuntu's runners keep an unprivileged account from mapping itself in a new user namespace
       # (AppArmor's restrict_unprivileged_userns), which contain's Linux tests need, as a stock Linux
       # allows: those of contain_linux_test.go, mounts_linux_test.go and rerun_linux_test.go make a
-      # user and PID namespace, and skip without one. This lifts that rule on the runner alone; the
-      # tests still run as the runner's own account, with no root.
+      # user and PID namespace. This lifts that rule on the runner alone; the tests still run as the
+      # runner's own account, with no root.
       - name: allow unprivileged user namespaces
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # cmd/apigate's tests build apidiff from tools/apidiff.mod with the network off, as a test
-      # binary under testkit's GoOffline does, so its modules are fetched first.
+      # binary under testkit's GoOffline does, so that file's modules are fetched first. They are
+      # golang.org/x modules, all public.
       - name: fetch apidiff's modules
         run: go mod download -modfile=tools/apidiff.mod
       - name: go vet
@@ -53,8 +54,43 @@ jobs:
           go vet ./...
           (cd contain && go vet ./...)
           (cd taskfile && go vet ./...)
+      # go test runs as the release tier runs it, with the race detector, in shuffled order and never
+      # from the test cache, and writes its events as JSON for the step after it to count. Each of
+      # the three modules runs whether or not one before it failed, and the step is red if any did.
       - name: go test
+        id: test
         run: |
-          go test ./...
-          (cd contain && go test ./...)
-          (cd taskfile && go test ./...)
+          race=-race
+          if [ "$(go env CGO_ENABLED)" != 1 ]; then
+            race=
+          fi
+          echo "GO_TEST_RACE=${race:-off}" >> "$GITHUB_ENV"
+          events="$RUNNER_TEMP/go-test.json"
+          status=0
+          go test -json $race -shuffle=on -count=1 ./... > "$events" || status=1
+          (cd contain && go test -json $race -shuffle=on -count=1 ./...) >> "$events" || status=1
+          (cd taskfile && go test -json $race -shuffle=on -count=1 ./...) >> "$events" || status=1
+          exit $status
+      # Counts the passed, failed and skipped tests of the three modules into the log and the job
+      # summary, prints each failed or skipped test's own output, and is red on any failure and on
+      # any skip: a test that skips on a runner proves nothing there.
+      - name: test counts
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        env:
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          events="$RUNNER_TEMP/go-test.json"
+          count() { jq -R -n --arg a "$1" '[inputs | fromjson? | select(.Test != null and .Action == $a)] | length' "$events" | tr -d '\r'; }
+          passed=$(count pass)
+          failed=$(count fail)
+          skipped=$(count skip)
+          jq -R -n -r '[inputs | fromjson? | select(.Test != null)] as $e
+            | ($e | map(select(.Action == "fail" or .Action == "skip") | .Package + " " + .Test)) as $bad
+            | $e[] | select(.Action == "output") | select((.Package + " " + .Test) as $k | any($bad[]; . == $k)) | .Output' "$events" | tr -d '\r'
+          jq -R -n -r '[inputs | fromjson? | select(.Test == null and .Action == "fail")] | .[] | "FAIL " + .Package' "$events" | tr -d '\r'
+          line="tests: $passed passed, $failed failed, $skipped skipped (race $GO_TEST_RACE)"
+          echo "$line"
+          echo "$line" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$TEST_OUTCOME" != success ] || [ "$failed" -ne 0 ] || [ "$skipped" -ne 0 ] || [ "$passed" -eq 0 ]; then
+            exit 1
+          fi
