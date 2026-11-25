@@ -22,8 +22,9 @@
 // It is built on go test's own practice, a TestMain that calls Main, and adds the isolation go test
 // leaves out. The app sets it by Main's and Isolate's options: Keep lets a named variable through
 // the allow list, Drop makes a prefix leak, and GoOffline gives every go a test starts no module
-// proxy, direct fetch, checksum server or toolchain download. A package's test of its own isolation
-// calls Isolated. Build builds a program under test once and runs it; the isolation starts none.
+// proxy, direct fetch, checksum server or toolchain download. NoNetwork holds the test process and
+// its children to loopback on macOS and Linux, and fails the run where it cannot. A package's test of
+// its own isolation calls Isolated. Build builds a program under test once and runs it; the isolation starts none.
 //
 // The module imports the standard library only. Its list of the home, temp and XDG_ names is its
 // own, internal/homevars; go-proc keeps the same list for proc.HomeEnv, and a go-proc test holds the

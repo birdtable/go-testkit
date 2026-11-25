@@ -35,7 +35,14 @@ import (
 // Raised by 12 to 5234, by measure, for doc lines alone: contain, taskfile and cmd/apigate each say
 // what they are built on, what they add and what the caller configures (14 lines), and two comments
 // lose a line each where an issue citation came out.
-const Ceiling = 5234
+//
+// Raised by 528 to 5762, by measure, for NoNetwork, the network guard: nonetwork.go is the option, its
+// probe and its doc of what it does and does not promise (128); nonetwork_darwin.go is the sandbox_init
+// call by name with no cgo, and its profile (93); nonetwork_linux.go is the two-step rerun into a user
+// and network namespace, loopback brought up, the ready pipe and the passing on of signals (272);
+// nonetwork_windows.go and nonetwork_other.go are the refusal elsewhere (17 each); and doc.go's
+// paragraph names it (1). The .s trampolines are not Go lines.
+const Ceiling = 5762
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

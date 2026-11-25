@@ -74,6 +74,12 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 3 && os.Args[1] == abandonWord {
 		os.Exit(abandon(os.Args[2], os.Args[3:]))
 	}
+	if len(os.Args) > 4 && os.Args[1] == guardWord {
+		os.Exit(guardChild(os.Args[2], os.Args[3], os.Args[4]))
+	}
+	if len(os.Args) > 2 && os.Args[1] == dialWord {
+		os.Exit(dialChild(os.Args[2]))
+	}
 	if out := os.Getenv(childName); out != "" {
 		if err := os.WriteFile(out, []byte(strings.Join(os.Environ(), "\x00")), 0o600); err != nil {
 			panic(err)
