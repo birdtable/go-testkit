@@ -379,7 +379,7 @@ func compile(key buildKey) (string, error) {
 	// A folder is built from inside it, as the package ".", so a module of its own is read from its
 	// own go.mod and a folder of the caller's module from the module above it. An import path is built
 	// where the test runs, against that module. A BuildAt's tree is unpacked beside the binary and built
-	// from its source's folder there, with no GOWORK, so its own go.mod and go.sum decide its modules.
+	// from its source's folder there, with GOWORK=off, so no go.work but its own go.mod decides.
 	// The build runs in the clean environment the test has, not the test process's own, so a variable a
 	// test set (GOFLAGS, CGO_ENABLED) does not reach the one shared binary. Under Isolate that is the
 	// pinned GOCACHE, GOMODCACHE and GOPATH; outside one Clean drops them, so Build is for use under Main.
@@ -393,10 +393,10 @@ func compile(key buildKey) (string, error) {
 			return "", fmt.Errorf("building %s: %w", pkg, err)
 		}
 		target, where = at.target, filepath.Join(tree, filepath.FromSlash(at.dir))
-		env = slices.DeleteFunc(env, func(kv string) bool {
+		env = append(slices.DeleteFunc(env, func(kv string) bool {
 			k, _, _ := strings.Cut(kv, "=")
 			return k == "GOWORK" || foldNames && strings.EqualFold(k, "GOWORK")
-		})
+		}), "GOWORK=off")
 	} else if fi, err := os.Stat(pkg); err == nil && fi.IsDir() {
 		target, where = ".", pkg
 	}

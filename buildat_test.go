@@ -373,3 +373,39 @@ func TestUnpackRefusesAnEntryThatLeavesItsFolderOrIsOfAnotherKind(t *testing.T) 
 		t.Fatalf("ran %d rows, want 4", ran)
 	}
 }
+
+// TestBuildAtBuildsWithGOWORKOffWhateverGoWorkIsNear: BuildAt builds an earlier commit with GOWORK=off,
+// so neither a go.work in a folder above the build's folder, where the temp folder is, nor one the old
+// tree commits beside its go.mod decides its modules: each would make go build fail with "no modules
+// were found in the current workspace". The planted red of each row is GOWORK left unset in the
+// build's environment.
+//
+// What it costs when this fails: a stray go.work in the temp folder, another account's in /tmp or the
+// person's own, fails every BuildAt build with go's workspace error, far from its cause.
+func TestBuildAtBuildsWithGOWORKOffWhateverGoWorkIsNear(t *testing.T) {
+	// serial: t.Chdir into the repository and t.Setenv of the temp folder.
+	const work = "go 1.27\n"
+	ran := 0
+	for _, row := range []string{"a go.work above the build's folder", "a go.work the old tree commits"} {
+		ran++
+		repo := upgradeRepo(t)
+		if row == "a go.work the old tree commits" {
+			writeTree(t, repo, map[string]string{"app/go.work": work})
+			gitIn(t, repo, "add", "-A")
+			gitIn(t, repo, "commit", "-q", "-m", "a go.work that uses nothing")
+		} else {
+			tmp := t.TempDir()
+			writeTree(t, tmp, map[string]string{"go.work": work})
+			for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+				t.Setenv(k, tmp)
+			}
+		}
+		t.Chdir(filepath.Join(repo, "app"))
+		if r := BuildAt(t, "HEAD", "cmd/upg").Run("version"); r.Code != 0 || r.Stdout != "0.2.0\n" {
+			t.Errorf("%s: %+v, want code 0 and the version", row, r)
+		}
+	}
+	if ran != 2 {
+		t.Fatalf("ran %d rows, want 2", ran)
+	}
+}

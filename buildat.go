@@ -25,10 +25,10 @@ import (
 // writes into a folder beneath the temp folder, as Build's own build folder is. The caller's
 // repository is only read: no worktree is added, nothing is checked out, and .git is unchanged. A file
 // the old tree's .gitattributes marks export-ignore is left out of the archive, so out of the build.
-// go build runs there in the clean environment Build's has, less GOWORK, so the old tree's own go.mod
-// and go.sum decide its modules; under GoOffline a module the old tree needs that the module cache
-// lacks fails the build, and go's output names it. git runs in the clean environment too, so it reads
-// git's configuration as Isolate set it, not the person's.
+// go build runs there in the clean environment Build's has, with GOWORK=off, so the old tree's own
+// go.mod and go.sum decide its modules, and no go.work above the folder or in the tree does; under
+// GoOffline a module the old tree needs that the module cache lacks fails the build, and go's output
+// names it. git runs in the clean environment too, so it reads git's configuration as Isolate set it.
 //
 // BuildAt fails t, and never skips it: where no Isolate is in force; where ref starts with -, which
 // git would read as an option, or names no commit; where pkg starts with -, which go build would read

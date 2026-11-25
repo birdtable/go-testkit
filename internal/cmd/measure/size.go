@@ -39,7 +39,7 @@ import (
 // Raised by 211 to 5445, by measure, for BuildAt, which builds a program at an earlier commit for an
 // upgrade test: buildat.go is 183, the ref and package refusals, git rev-parse and git archive
 // unpacked through an os.Root, and its doc; binary.go adds 28, compile building a BuildAt's tree from
-// its folder with no GOWORK, and modRoot and importPath, which resolve and BuildAt share.
+// its folder with GOWORK=off, and modRoot and importPath, which resolve and BuildAt share.
 const Ceiling = 5445
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
