@@ -35,10 +35,10 @@ vars:
   # runs there; HoldRead skips with NoHold, as Go's syscall package has no Mkfifo there.
   MORE_SYSTEMS: aix/ppc64 illumos/amd64 solaris/amd64
   # CONTAIN_WORK opens each command of a contain member. contain is a module of its own beside the root
-  # whose go.mod requires the root at v0.2.0, which no proxy holds before the tag,
+  # whose go.mod requires the root at v0.3.1, while a member tests contain against this tree's root,
   # so the member writes a workspace file outside the tree
   # that uses both folders and replaces that one version with this tree's root. Without the replace, go
-  # still reads v0.2.0's go.mod, which is not there. Its folder is named by the task as well as $$, which
+  # reads v0.3.1's go.mod from the proxy and not this tree's. Its folder is named by the task as well as $$, which
   # go-task's shell gives every member of a tier alike, as they run side by side. The file pins the root's
   # toolchain, so a tool built for the root reads the same standard library. It is removed when the
   # command ends; nothing of it is committed. The member then runs in contain/.
@@ -47,7 +47,7 @@ vars:
     rm -rf "$w"; mkdir -p "$w" || exit 1
     trap 'rm -rf "$w"' EXIT
     (cd "$w" && GOWORK= go work init "{{.ROOT_DIR}}" "{{.ROOT_DIR}}/contain" \
-      && GOWORK= go work edit -go=1.27.1 -toolchain=go1.27.4 -replace="github.com/birdtable/go-testkit@v0.2.0={{.ROOT_DIR}}") \
+      && GOWORK= go work edit -go=1.27.1 -toolchain=go1.27.4 -replace="github.com/birdtable/go-testkit@v0.3.1={{.ROOT_DIR}}") \
       || { echo "contain: the workspace file could not be written in $w" >&2; exit 1; }
     export GOWORK="$w/go.work"
     cd "{{.ROOT_DIR}}/contain"
@@ -391,7 +391,7 @@ tasks:
   # contain-deps is contain's graph before the tag: on each
   # system, with the tests, contain takes testkit, libcap/cap and libcap/psx and no other module, and so
   # no golang.org/x/sys. go mod graph, go mod tidy -diff and go mod verify are read with
-  # GOWORK=off at the commit that adds go-testkit v0.2.0's lines to contain/go.sum, after the tag.
+  # GOWORK=off, against the go-testkit version contain/go.mod requires and contain/go.sum holds.
   contain-deps:
     desc: contain takes testkit, libcap/cap and libcap/psx alone, on every system, by go list -deps
     cmds:

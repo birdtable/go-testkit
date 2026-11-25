@@ -3,7 +3,7 @@
 Runs a test binary inside a containment, so a test that sends a signal reaches no process outside it.
 
 `github.com/birdtable/go-testkit/contain` is a module of its own beside `github.com/birdtable/go-testkit`. It is
-an option of testkit's `Main`, and requires `github.com/birdtable/go-testkit` v0.2.0:
+an option of testkit's `Main`, and requires `github.com/birdtable/go-testkit` v0.3.1:
 
     go get github.com/birdtable/go-testkit/contain
 
