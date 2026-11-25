@@ -121,7 +121,8 @@ Main sets the guard before any test runs, and proves it: a connect to `192.0.2.1
 by the guard, and one to a listener on `127.0.0.1` must succeed. On macOS the guard is the system
 sandbox, set on the test process with `sandbox_init`. On Linux the test binary reruns in a user and
 network namespace of its own, with only loopback up. The guard is tested on macOS arm64 and Linux
-amd64. On macOS amd64 it is built and vetted only, by CI on every pull request.
+amd64. On macOS amd64 it is not tested: it is vetted by CI on every pull request, and built by the
+push tier.
 
 Where the guard cannot be set, no test runs, and Main's error says why. `NoNetwork("windows")` names
 a system where you accept running the tests with the network open. There Main prints one line to
