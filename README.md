@@ -11,7 +11,7 @@
 Go tests that run in an environment of their own.
 
 <p>
-  <a href="https://github.com/birdtable/go-testkit/releases"><img src="https://img.shields.io/github/release/birdtable/go-testkit.svg" alt="Latest Release"></a>
+  <a href="https://github.com/birdtable/go-testkit/releases"><img src="https://img.shields.io/github/v/release/birdtable/go-testkit?filter=v*" alt="Latest Release"></a>
   <a href="https://pkg.go.dev/github.com/birdtable/go-testkit"><img src="https://pkg.go.dev/badge/github.com/birdtable/go-testkit.svg" alt="Go Reference"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/birdtable/go-testkit.svg" alt="License"></a>
 </p>
