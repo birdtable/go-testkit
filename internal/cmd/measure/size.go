@@ -36,17 +36,22 @@ import (
 // what they are built on, what they add and what the caller configures (14 lines), and two comments
 // lose a line each where an issue citation came out.
 //
-// Raised by 528 to 5762, by measure, for NoNetwork, the network guard: nonetwork.go is the option, its
+// Raised by 211 to 5445, by measure, for BuildAt, which builds a program at an earlier commit for an
+// upgrade test: buildat.go is 183, the ref and package refusals, git rev-parse and git archive
+// unpacked through an os.Root, and its doc; binary.go adds 28, compile building a BuildAt's tree from
+// its folder with GOWORK=off, and modRoot and importPath, which resolve and BuildAt share.
+//
+// Raised by 528 to 5973, by measure, for NoNetwork, the network guard: nonetwork.go is the option, its
 // probe and its doc of what it does and does not promise (128); nonetwork_darwin.go is the sandbox_init
 // call by name with no cgo, and its profile (93); nonetwork_linux.go is the two-step rerun into a user
 // and network namespace, loopback brought up, the ready pipe and the passing on of signals (272);
 // nonetwork_windows.go and nonetwork_other.go are the refusal elsewhere (17 each); and doc.go's
 // paragraph names it (1). The .s trampolines are not Go lines.
 //
-// Raised by 19 to 5781, by measure, for NoNetwork's Go resolver on Linux: nonetwork_linux.go's
+// Raised by 19 to 5992, by measure, for NoNetwork's Go resolver on Linux: nonetwork_linux.go's
 // withGoResolver appends netdns=go to the rerun's GODEBUG, keeping the caller's settings (17), and
 // nonetwork.go's doc says so and narrows the limit to programs that are not Go (2).
-const Ceiling = 5781
+const Ceiling = 5992
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
