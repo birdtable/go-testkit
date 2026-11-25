@@ -6,7 +6,7 @@
   </picture>
 </p>
 
-# testkit
+# go-testkit
 
 Go tests that run in an environment of their own.
 
@@ -17,9 +17,10 @@ Go tests that run in an environment of their own.
 </p>
 
 Your tests should not see your home folder, your git settings or the token in your shell, and they
-should behave the same on Linux, macOS and Windows. testkit gives a test process and its children a
-clean, allow-listed environment, and adds the helpers that tests of programs keep needing: stand-in
-programs, a bounded rerun of the test binary, probes for what the system refuses, and containment.
+should behave the same on Linux, macOS and Windows. go-testkit gives a test process and its children
+a clean, allow-listed environment, and adds the helpers that tests of programs keep needing:
+stand-in programs, a bounded rerun of the test binary, probes for what the system refuses, and
+containment.
 
 ## Install
 
@@ -113,8 +114,8 @@ Each release is tested on macOS (arm64), Linux (amd64) and Windows (amd64), and 
 for arm64 on Linux and Windows. AIX, illumos and Solaris are built, vetted and linted too, and no
 test runs there.
 
-Where a system cannot do something, testkit skips the test with a named reason, and never fails it.
-The main ones:
+Where a system cannot do something, go-testkit skips the test with a named reason, and never fails
+it. The main ones:
 
 - **Windows:** `Link` skips with `NoLinks` where Developer Mode is off, `Modes` skips with `NoModes`,
   and `Running.Terminate` returns an error that wraps `errors.ErrUnsupported`.
