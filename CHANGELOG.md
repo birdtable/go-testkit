@@ -19,6 +19,9 @@ Nothing changes for a test: every name gives what it gave. A test that matched t
 * `Build`'s refusal of a package that starts with `-` reads "testkit: Build refuses a package that starts with -, which go build would read as a flag: " and the package. It named an issue before the colon, which a reader could not open; a test that matched that text matches the refusal's own words.
 * build: the push tier is judged by its CPU time, under hatch v0.6.0, so a busy host does not fail it on wall time. Each module's `api/proved.txt` is gone: the systems a release was tested on are in its notes. No exported name, no behaviour of a call and no go.mod require changes.
 
+### contain/v0.1.2
+* Added 2026-11-25, after the tag: contain/v0.1.1 requires `github.com/birdtable/go-testkit` v0.2.0, a version no public proxy or repository holds, so contain/v0.1.1 cannot be fetched or built. contain/v0.1.2 requires go-testkit v0.3.1 and retracts v0.1.1, so `go get github.com/birdtable/go-testkit/contain` takes v0.1.2 and `go list -m -u` passes v0.1.1 over. Nothing else changes: contain's API, docs and other requires are v0.1.1's. Pin contain/v0.1.2.
+
 ## v0.3.0 - 2026-11-22
 ### Added
 * `Interrupted(ctx)` gives a child of `RerunInterrupted` a context that ends at the interrupt, and its stop. It installs the handler and only then writes `Ready`'s line, so the parent's interrupt never comes before the handler and ends the child by the default action. Outside a child of `Rerun` it returns `ctx` and a stop that does nothing, installs no handler and writes nothing. Its error is `Ready`'s, and then it leaves no handler. `Ready` stays for a child that catches more than the interrupt.
