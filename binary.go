@@ -18,7 +18,7 @@ import (
 	"unicode"
 )
 
-// A Binary is a program under test. Build returns one; Path, Run and RunInput compile it on first
+// A Binary is a program under test. Build and BuildAt return one; Path, Run and RunInput compile it on first
 // use, once for each package however many Binary values or tests ask for it. The build lives under
 // the test's own temp folder, so Isolate's restore removes it with the rest. The one build is for the
 // test binary's life under Main's Isolate: a package first built inside a nested Isolate has its
@@ -184,12 +184,14 @@ func varName(name string) error {
 	return nil
 }
 
-// A buildKey is what one compilation is: a package and the flags it is built with, as a comparable
-// struct, so no package and flag pair can stand for another.
+// A buildKey is what one compilation is: a package, the tree it is read from and the flags it is built
+// with, as a comparable struct, so no package and flag pair can stand for another. at is the zero
+// source for a Build, which reads today's tree.
 type buildKey struct {
 	pkg      string
 	ldflags  string
 	trimpath bool
+	at       source
 }
 
 // builds holds one compilation for each package and flag set, so every Binary and test that names
@@ -376,17 +378,30 @@ func compile(key buildKey) (string, error) {
 	}
 	// A folder is built from inside it, as the package ".", so a module of its own is read from its
 	// own go.mod and a folder of the caller's module from the module above it. An import path is built
-	// where the test runs, against that module.
-	target, where := pkg, ""
-	if fi, err := os.Stat(pkg); err == nil && fi.IsDir() {
-		target, where = ".", pkg
-	}
-	cmd := exec.Command("go", append(args, target)...) //nolint:gosec,noctx // the build is a bounded compile, and no caller context reaches compile through the fixed Build and Run signatures
-	cmd.Dir = where
+	// where the test runs, against that module. A BuildAt's tree is unpacked beside the binary and built
+	// from its source's folder there, with no GOWORK, so its own go.mod and go.sum decide its modules.
 	// The build runs in the clean environment the test has, not the test process's own, so a variable a
 	// test set (GOFLAGS, CGO_ENABLED) does not reach the one shared binary. Under Isolate that is the
 	// pinned GOCACHE, GOMODCACHE and GOPATH; outside one Clean drops them, so Build is for use under Main.
-	cmd.Env = Clean(os.Environ())
+	target, where, env := pkg, "", Clean(os.Environ())
+	if at := key.at; at.commit != "" {
+		tree := filepath.Join(dir, "tree")
+		if err := os.Mkdir(tree, 0o700); err != nil {
+			return "", err
+		}
+		if err := unpack(at, tree); err != nil {
+			return "", fmt.Errorf("building %s: %w", pkg, err)
+		}
+		target, where = at.target, filepath.Join(tree, filepath.FromSlash(at.dir))
+		env = slices.DeleteFunc(env, func(kv string) bool {
+			k, _, _ := strings.Cut(kv, "=")
+			return k == "GOWORK" || foldNames && strings.EqualFold(k, "GOWORK")
+		})
+	} else if fi, err := os.Stat(pkg); err == nil && fi.IsDir() {
+		target, where = ".", pkg
+	}
+	cmd := exec.Command("go", append(args, target)...) //nolint:gosec,noctx // the build is a bounded compile, and no caller context reaches compile through the fixed Build and Run signatures
+	cmd.Dir, cmd.Env = where, env
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("building %s:\n%s", pkg, out)
 	}
@@ -398,23 +413,36 @@ func compile(key buildKey) (string, error) {
 // Walking up to the go.mod is the only answer that does not encode each caller's depth. An absolute
 // path and an import path (a dot in the first element) are taken as they are.
 func resolve(pkg string) string {
-	if pkg == "" || filepath.IsAbs(pkg) {
+	if pkg == "" || filepath.IsAbs(pkg) || importPath(pkg) {
 		return pkg
 	}
-	if first, _, _ := strings.Cut(filepath.ToSlash(pkg), "/"); first != "." && first != ".." && strings.Contains(first, ".") {
-		return pkg
+	if mod, ok := modRoot(); ok {
+		return filepath.Join(mod, pkg)
 	}
+	return pkg
+}
+
+// importPath is whether pkg is an import path, not a folder: its first element holds a dot, and is
+// neither . nor ..
+func importPath(pkg string) bool {
+	first, _, _ := strings.Cut(filepath.ToSlash(pkg), "/")
+	return first != "." && first != ".." && strings.Contains(first, ".")
+}
+
+// modRoot is the folder of the go.mod nearest above the test's folder, the folder itself included,
+// and whether there is one.
+func modRoot() (string, bool) {
 	dir, err := os.Getwd()
 	if err != nil {
-		return pkg
+		return "", false
 	}
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, pkg)
+			return dir, true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return pkg
+			return "", false
 		}
 		dir = parent
 	}
