@@ -125,11 +125,11 @@ func unpack(at source, into string) (err error) {
 		return err
 	}
 	werr := untar(root, r)
-	if werr != nil {
-		// Read the rest, so git is not left blocked on a full pipe and Wait returns.
-		if _, err := io.Copy(io.Discard, r); err != nil {
-			werr = errors.Join(werr, err)
-		}
+	// Read the rest, always: the tar reader stops at the end-of-archive blocks, and git archive pads
+	// its stream to a 10240-byte record past them. Wait closes the pipe only once git has exited, so
+	// padding left in a pipe smaller than it, as Windows' is, blocks git and Wait with it.
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		werr = errors.Join(werr, err)
 	}
 	if err := cmd.Wait(); err != nil {
 		return errors.Join(werr, fmt.Errorf("git archive %s: %w: %s", at.commit, err, strings.TrimSpace(stderr.String())))
