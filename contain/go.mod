@@ -5,7 +5,7 @@ go 1.27.1
 toolchain go1.27.4
 
 require (
-	github.com/birdtable/go-testkit v0.4.1-0.20261126014529-ebf77cb0e26a
+	github.com/birdtable/go-testkit v0.5.0
 	kernel.org/pub/linux/libs/security/libcap/cap v1.2.78
 )
 
