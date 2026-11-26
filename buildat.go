@@ -1,7 +1,7 @@
 package testkit
 
 import (
-	"archive/tar"
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +9,7 @@ import (
 	"os/exec" //nolint:depguard // BuildAt runs git, which reads the caller's repository and writes nothing to it
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -21,10 +22,16 @@ import (
 // it as there, and Path, Run and Install build it on first use, once for each commit, package and flag
 // set, in the cache Build uses, so two refs that name one commit build once.
 //
-// BuildAt resolves ref to its commit at once, and builds from that commit's tree, which git archive
-// writes into a folder beneath the temp folder, as Build's own build folder is. The caller's
-// repository is only read: no worktree is added, nothing is checked out, and .git is unchanged. A file
-// the old tree's .gitattributes marks export-ignore is left out of the archive, so out of the build.
+// BuildAt resolves ref to its commit at once, and builds from that commit's tree, which it reads raw,
+// by git ls-tree and git cat-file, into a folder beneath the temp folder, as Build's own build folder
+// is. The caller's repository is only read: no worktree is added, nothing is checked out, and .git is
+// unchanged. The tree is written as committed: no filter and no attribute applies, so a smudge filter
+// the repository's config sets, Git LFS's among them, never runs, an LFS file stays its pointer file,
+// line endings stay as committed, and a file marked export-ignore is there. A file keeps its executable
+// bit and a link is a link, and a submodule's folder is left out, as go build reads none. Every git it
+// runs is given GIT_NO_LAZY_FETCH=1, so a partial clone's promisor remote is never asked for a missing
+// object: such a tree fails the build, saying the clone is partial and lacks it. That promise needs
+// git 2.45 or later, the first git that reads the variable; an older git fetches the object.
 // go build runs there in the clean environment Build's has, with GOWORK=off, so the old tree's own
 // go.mod and go.sum decide its modules, and no go.work above the folder or in the tree does; under
 // GoOffline a module the old tree needs that the module cache lacks fails the build, and go's output
@@ -89,34 +96,70 @@ func sourceAt(git, ref, pkg string) (source, error) {
 	return at, nil
 }
 
-// gitOut is what git prints for args, run in dir with the clean environment, less its last newline,
-// or git's failure with what it wrote to stderr.
+// gitEnv is the environment of every git BuildAt runs: the clean one, so git reads its configuration
+// as Isolate set it, and GIT_NO_LAZY_FETCH=1, so git asks no promisor remote for an object the
+// repository lacks, and a partial clone is read as it is and written to never.
+func gitEnv() []string {
+	return append(Clean(os.Environ()), "GIT_NO_LAZY_FETCH=1")
+}
+
+// gitOut is what git prints for args, run in dir with gitEnv, less its last newline, or git's failure
+// with what it wrote to stderr.
 func gitOut(git, dir string, args ...string) (string, error) {
-	cmd := exec.Command(git, args...) //nolint:gosec,noctx // the host's git, reading the caller's repository with fixed arguments, a ref past --end-of-options
-	cmd.Dir, cmd.Env = dir, Clean(os.Environ())
-	out, err := cmd.Output()
-	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(ee.Stderr)))
-	}
+	out, err := gitRaw(git, dir, args...)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSuffix(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n"), nil
 }
 
-// unpack writes the tree of at's commit, as git archive gives it, into the empty folder into: each
-// folder, file and link, a file with the mode the archive gives it, less the umask. It writes through
-// an os.Root of into, so no entry reaches outside it, through a link or otherwise.
+// gitRaw is gitOut's run: git's output as it wrote it.
+func gitRaw(git, dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command(git, args...) //nolint:gosec,noctx // the host's git, reading the caller's repository with fixed arguments, a ref past --end-of-options
+	cmd.Dir, cmd.Env = dir, gitEnv()
+	out, err := cmd.Output()
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(ee.Stderr)))
+	}
+	return out, err
+}
+
+// errMissing is the error of an object of the tree that the repository lacks.
+var errMissing = errors.New("the repository lacks the object")
+
+// An entry is one entry of a commit's tree as git ls-tree -r names it: its git mode, the kind of its
+// object, the object's name, and its slash-separated path from the tree's top.
+type entry struct {
+	mode, kind, object, name string
+}
+
+// unpack writes the tree of at's commit into the empty folder into, read raw: git ls-tree -r names
+// each file, link and submodule of it, and git cat-file --batch gives each file's and link's bytes as
+// committed, so no filter or attribute applies. It writes through an os.Root of into, so no entry
+// reaches outside it, through a link or otherwise. A tree the repository lacks fails it, saying so
+// where the clone is partial.
 func unpack(at source, into string) (err error) {
+	out, err := gitRaw(at.git, at.top, "ls-tree", "-r", "-z", "--full-tree", at.commit)
+	if err != nil {
+		return lacking(at, err)
+	}
+	entries, err := parseTree(out)
+	if err != nil {
+		return err
+	}
 	root, err := os.OpenRoot(into)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	cmd := exec.Command(at.git, "archive", "--format=tar", at.commit) //nolint:gosec,noctx // the host's git, writing a full commit's tree to a pipe
-	cmd.Dir, cmd.Env = at.top, Clean(os.Environ())
+	cmd := exec.Command(at.git, "cat-file", "--batch") //nolint:gosec,noctx // the host's git, giving the objects ls-tree named
+	cmd.Dir, cmd.Env = at.top, gitEnv()
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
 	r, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -124,56 +167,145 @@ func unpack(at source, into string) (err error) {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	werr := untar(root, r)
-	// Read the rest, always: the tar reader stops at the end-of-archive blocks, and git archive pads
-	// its stream to a 10240-byte record past them. Wait closes the pipe only once git has exited, so
-	// padding left in a pipe smaller than it, as Windows' is, blocks git and Wait with it.
+	// The names go in while the answers are read, so neither pipe fills while git waits on the
+	// other, as Windows' small pipes would.
+	sent := make(chan error, 1)
+	go func() { sent <- sendNames(in, entries) }()
+	werr := unpackEntries(root, entries, bufio.NewReader(r))
+	// Read the rest, always: Wait closes the pipe only once git has exited, so an answer left in it
+	// after a failure blocks git and Wait with it.
 	if _, err := io.Copy(io.Discard, r); err != nil {
 		werr = errors.Join(werr, err)
 	}
+	serr := <-sent
 	if err := cmd.Wait(); err != nil {
-		return errors.Join(werr, fmt.Errorf("git archive %s: %w: %s", at.commit, err, strings.TrimSpace(stderr.String())))
+		return errors.Join(werr, fmt.Errorf("git cat-file: %w: %s", err, strings.TrimSpace(stderr.String())))
 	}
-	return werr
+	if werr != nil {
+		return lacking(at, werr)
+	}
+	return serr
 }
 
-// untar writes each entry of the tar stream r beneath root: the global header git archive starts
-// with is read past, and an entry of a kind git archive does not write is an error.
-func untar(root *os.Root, r io.Reader) error {
-	tr := tar.NewReader(r)
-	for {
-		h, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		name := strings.TrimSuffix(h.Name, "/")
-		switch h.Typeflag {
-		case tar.TypeXGlobalHeader:
+// sendNames writes the object of each file and link of entries to in, a line each, and closes it.
+func sendNames(in io.WriteCloser, entries []entry) error {
+	for _, e := range entries {
+		if e.kind != "blob" {
 			continue
-		case tar.TypeDir:
-			err = root.MkdirAll(name, 0o755)
-		case tar.TypeReg:
-			err = writeEntry(root, name, h.FileInfo().Mode().Perm(), tr)
-		case tar.TypeSymlink:
-			err = root.Symlink(h.Linkname, name)
-		default:
-			err = fmt.Errorf("it is of tar type %q, which git archive does not write", h.Typeflag)
 		}
-		if err != nil {
-			return fmt.Errorf("unpacking %s: %w", h.Name, err)
+		if _, err := io.WriteString(in, e.object+"\n"); err != nil {
+			return errors.Join(err, in.Close())
 		}
 	}
+	return in.Close()
 }
 
-// writeEntry writes the file name beneath root, with its folders, from r, with mode perm less the
-// umask. It replaces nothing.
-func writeEntry(root *os.Root, name string, perm os.FileMode, r io.Reader) error {
-	if err := root.MkdirAll(path.Dir(name), 0o755); err != nil {
+// parseTree reads the output of git ls-tree -r -z: an entry for each NUL-ended record, its mode, kind
+// and object separated by spaces and its path after a tab.
+func parseTree(out []byte) ([]entry, error) {
+	var entries []entry
+	for rec := range strings.SplitSeq(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		if rec == "" {
+			continue
+		}
+		meta, name, ok := strings.Cut(rec, "\t")
+		f := strings.Split(meta, " ")
+		if !ok || len(f) != 3 || name == "" {
+			return nil, fmt.Errorf("git ls-tree gave %q, which is no entry of a tree", rec)
+		}
+		entries = append(entries, entry{mode: f[0], kind: f[1], object: f[2], name: name})
+	}
+	return entries, nil
+}
+
+// unpackEntries writes each entry beneath root, a file's and a link's bytes read from the answers of
+// git cat-file --batch in br, one for each, in order. A submodule is left out; an entry of any other
+// kind is an error.
+func unpackEntries(root *os.Root, entries []entry, br *bufio.Reader) error {
+	for _, e := range entries {
+		var err error
+		switch {
+		case e.mode == "160000" && e.kind == "commit":
+			continue // a submodule: its folder is left out, as git archive leaves it, and go build reads none
+		case e.kind != "blob":
+			err = fmt.Errorf("it is a %s of git mode %s, which BuildAt does not write", e.kind, e.mode)
+		default:
+			err = unpackBlob(root, e, br)
+		}
+		if err != nil {
+			return fmt.Errorf("unpacking %s: %w", e.name, err)
+		}
+	}
+	return nil
+}
+
+// unpackBlob reads the answer for e from br and writes it beneath root: a file of mode 100644 or
+// 100755 with that mode less the umask, or a link of mode 120000 to the path its bytes hold.
+func unpackBlob(root *os.Root, e entry, br *bufio.Reader) error {
+	size, err := blobHeader(e, br)
+	if err != nil {
 		return err
 	}
+	if err := root.MkdirAll(path.Dir(e.name), 0o755); err != nil {
+		return err
+	}
+	body := io.LimitReader(br, size)
+	switch e.mode {
+	case "100644":
+		err = writeEntry(root, e.name, 0o644, body)
+	case "100755":
+		err = writeEntry(root, e.name, 0o755, body)
+	case "120000":
+		var target strings.Builder
+		if _, err = io.Copy(&target, body); err == nil {
+			err = root.Symlink(target.String(), e.name)
+		}
+	default:
+		return fmt.Errorf("it is of git mode %s, which BuildAt does not write", e.mode)
+	}
+	if err != nil {
+		return err
+	}
+	if b, err := br.ReadByte(); err != nil || b != '\n' {
+		return fmt.Errorf("git cat-file's answer for %s did not end where its size said", e.object)
+	}
+	return nil
+}
+
+// blobHeader reads the first line of git cat-file's answer for e from br, and is the size of the blob
+// it heads, errMissing where git lacks it, or why it is no answer for e.
+func blobHeader(e entry, br *bufio.Reader) (int64, error) {
+	line, err := br.ReadString('\n')
+	if err != nil {
+		return 0, fmt.Errorf("git cat-file ended before its answer for %s: %w", e.object, err)
+	}
+	f := strings.Fields(line)
+	if len(f) == 2 && f[0] == e.object && f[1] == "missing" {
+		return 0, fmt.Errorf("%w %s", errMissing, e.object)
+	}
+	if len(f) != 3 || f[0] != e.object || f[1] != "blob" {
+		return 0, fmt.Errorf("git cat-file answered %q for the blob %s", strings.TrimSpace(line), e.object)
+	}
+	size, err := strconv.ParseInt(f[2], 10, 64)
+	if err != nil || size < 0 {
+		return 0, fmt.Errorf("git cat-file gave %q as the size of %s", f[2], e.object)
+	}
+	return size, nil
+}
+
+// lacking is err, a read of at's tree that failed, said as what it is where the repository is a
+// partial clone: one that lacks the tree, which BuildAt does not fetch.
+func lacking(at source, err error) error {
+	promisors, cerr := gitOut(at.git, at.top, "config", "--get-regexp", `^(remote\..*\.promisor|extensions\.partialclone)$`)
+	if cerr != nil || promisors == "" {
+		return err
+	}
+	return fmt.Errorf("the clone is partial (%s) and lacks the tree of %s, which BuildAt does not fetch: fetch it first, or clone with no --filter: %w", strings.ReplaceAll(promisors, "\n", "; "), at.commit, err)
+}
+
+// writeEntry writes the file name beneath root from r, with mode perm less the umask. It replaces
+// nothing.
+func writeEntry(root *os.Root, name string, perm os.FileMode, r io.Reader) error {
 	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if err != nil {
 		return err
