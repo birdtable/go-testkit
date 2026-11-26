@@ -13,7 +13,7 @@ packages:
     role: leaf
     job: testkit's own list of the home, temp and XDG_ names, kept equal to go-proc's
     may: []
-    tests-may: []
+    tests-may: [.]
   - path: fake
     role: leaf
     job: a built stand-in program that does a list of steps, for a test that would plant a script
@@ -33,12 +33,17 @@ packages:
     role: command
     job: the size of testkit's code, each module's non-test Go lines outside internal/ and their total, held to its Ceiling
     may: []
-    tests-may: []
+    tests-may: [.]
   - path: internal/contract
     role: leaf
     job: each module's api/contract.txt, and the README's quick start, held in a test no package imports
     may: []
-    tests-may: []
+    tests-may: [.]
+  - path: internal/link
+    role: leaf
+    job: each package of the module held to its row of this table, in a test no package imports
+    may: []
+    tests-may: [.]
   - path: internal/example/quickstart
     role: example
     job: the README's quick start, a TestMain that calls Main and one test, compiled and run as written

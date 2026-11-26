@@ -25,6 +25,8 @@
 // proxy, direct fetch, checksum server or toolchain download. NoNetwork holds the test process and
 // its children to loopback on macOS and Linux, and fails the run where it cannot. A package's test of
 // its own isolation calls Isolated. Build builds a program under test once and runs it; the isolation starts none.
+// One test at the module's root calls RequireMain, which fails each package of the module whose
+// TestMain does not call Main, so no package's tests are left in the person's environment.
 //
 // The module imports the standard library only. Its list of the home, temp and XDG_ names is its
 // own, internal/homevars; go-proc keeps the same list for proc.HomeEnv, and a go-proc test holds the

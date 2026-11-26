@@ -66,6 +66,11 @@ func TestTheEnvironmentIsTheRunsOwn(t *testing.T) {
 Need a variable through? Pass `testkit.Keep("MY_VAR")` to `Main`. Want no go a test starts to
 fetch anything? Pass `testkit.GoOffline()`.
 
+To be sure no package is left out, add one test at the module's root that calls
+`testkit.RequireMain(t)`. It fails each package with tests whose `TestMain` does not call `Main`, on
+Linux, macOS and Windows alike. A package that cannot call it opts out with a
+`//testkit:unisolated <reason>` line in one of its test files.
+
 ## What's inside
 
 | Package | What it does |

@@ -97,7 +97,13 @@ import (
 // folder in one place and buildAtIn resolves from a folder it is given, so BuildAt's own tests that
 // need no chdir run in parallel (buildat.go, 7); and modRootOf is modRoot from a given folder, which
 // modRoot and sourceAt share (binary.go, 9).
-const Ceiling = 6239
+//
+// Raised by 365 to 6604, by measure, for RequireMain, the check that every package's TestMain calls
+// Main: requiremain.go is 363, go list -e -json for darwin, linux and windows with GOARCH=amd64 and cgo
+// off, the TestMain and its call read with go/parser, the opt-out line, the file and build line that
+// leave a TestMain out, a package a pattern names that a system builds nothing of passed, go's errors
+// with the import they name, and its doc; and doc.go's two lines name it (2).
+const Ceiling = 6604
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
