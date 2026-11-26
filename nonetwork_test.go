@@ -226,10 +226,12 @@ func refused(t *testing.T, refusal string) {
 }
 
 // Planted failure: a named system that still fails, or runs silently, makes the run end 3 or the stderr
-// line go missing. Risk: as the test above.
+// line go missing. Risk: as the test above. The run is unguarded, so its dials go to port 0 of
+// loopback, which no listener can hold and every system refuses at once: none leaves the machine,
+// and none waits on a timeout.
 func TestNoNetworkNamingTheSystemRunsTheTestsUnguardedAndSaysSo(t *testing.T) {
 	t.Parallel()
-	code, got, stderr := runGuard(t, refusalWrap(plain), modeAccepted, probeTarget, plain)
+	code, got, stderr := runGuard(t, refusalWrap(plain), modeAccepted, "127.0.0.1:0", plain)
 	if _, ran := got["ran"]; !ran || code != 0 {
 		t.Fatalf("an accepted refusal ended %d and ran %v, want 0 and the tests run: %v\n%s", code, ran, got, stderr)
 	}
