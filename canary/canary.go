@@ -52,7 +52,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -566,8 +565,8 @@ func (s *Set) Value(place string, v any) []Hit {
 // scan reads r a chunk at a time, each chunk after the last longest bytes of the one before so a
 // needle across two chunks is found with the byte before it, and is the hits, one per name and
 // encoding, each reported. An occurrence is counted in the chunk where it ends, so one in the kept
-// tail is not counted twice. It ends cleanly on io.EOF alone: any other error r gives, a short read r
-// reports as io.ErrUnexpectedEOF among them, is its error.
+// tail is not counted twice. It ends cleanly on io.EOF itself alone: any other error r gives, a short
+// read's io.ErrUnexpectedEOF and an io.EOF wrapped in another among them, is its error.
 func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 	s.t.Helper()
 	tail := s.longest
@@ -575,12 +574,12 @@ func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 	kept := 0
 	tl := tally{check: check, place: s.redact(place), index: map[[2]string]int{}}
 	for {
-		n, err := fill(r, buf[kept:kept+s.chunk])
+		n, end, err := fill(r, buf[kept:kept+s.chunk])
 		data := buf[:kept+n]
 		for _, nd := range s.needles {
 			tl.find(nd, data, kept)
 		}
-		if errors.Is(err, io.EOF) {
+		if end {
 			break
 		}
 		if err != nil {
@@ -596,19 +595,20 @@ func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 	return tl.hits, nil
 }
 
-// fill reads r into b until b is full or r gives an error, and is the count and r's own error. Where
-// io.ReadFull turns an end inside b into io.ErrUnexpectedEOF, and so would hide the one archive/zip
-// gives for an entry shorter than its header says, fill gives io.EOF only when r said io.EOF.
-func fill(r io.Reader, b []byte) (int, error) {
+// fill reads r into b until b is full or r gives an error, and is the count, whether r ended, and r's
+// own error. r ended only where Read gave io.EOF itself, as io.EOF's doc says it must: io takes a
+// wrapped io.EOF for an error. io.ReadFull would turn an end inside b into io.ErrUnexpectedEOF, and
+// so hide the one archive/zip gives for an entry shorter than its header says.
+func fill(r io.Reader, b []byte) (int, bool, error) {
 	n := 0
 	for n < len(b) {
 		m, err := r.Read(b[n:])
 		n += m
 		if err != nil {
-			return n, err
+			return n, err == io.EOF, err
 		}
 	}
-	return n, nil
+	return n, false, nil
 }
 
 // tally is the hits of one place so far: one per name and encoding, with its first offset and count.

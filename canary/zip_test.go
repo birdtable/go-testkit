@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/birdtable/go-testkit"
 )
@@ -303,6 +304,43 @@ func TestZipOrReaderFailsOnAReadThatEndsShort(t *testing.T) {
 		if !strings.Contains(said, want) {
 			t.Errorf("reads that end short said %q, want %q", said, want)
 		}
+	}
+}
+
+// TestReaderFailsOnAWrappedEOFAndEndsOnABareOne: a reader that gives 90 bytes of a text and then
+// io.EOF wrapped in another error, as a reader gives where its stream is cut, fails Reader naming its
+// place, with the token at byte 100 unread; a reader of the whole text that gives io.EOF itself ends
+// cleanly with its hit at 100.
+//
+// What it costs when this fails: a check passes a stream it did not read to its end, as an io.EOF a
+// reader wrapped was taken for the end.
+func TestReaderFailsOnAWrappedEOFAndEndsOnABareOne(t *testing.T) {
+	t.Parallel()
+	rec := newRecorder(t)
+	var s *Set
+	if rec.do(func() { s = New(rec, "token") }) {
+		t.Fatalf("planting: %s", rec.said())
+	}
+	v := s.Get("token")
+	text := strings.Repeat("x", 100) + v + "\n"
+	cut := fmt.Errorf("frame cut: %w", io.EOF)
+	if hits := s.Reader("cut.log", io.MultiReader(strings.NewReader(text[:90]), iotest.ErrReader(cut))); hits != nil {
+		t.Errorf("a stream cut at byte 90 gave %d hits, want none", len(hits))
+	}
+	want := fmt.Sprintf("canary: Reader cannot read %q: %v", "cut.log", cut)
+	if said := rec.said(); !strings.Contains(said, want) {
+		t.Errorf("a stream cut with a wrapped io.EOF said %q, want %q", said, want)
+	}
+
+	whole := newRecorder(t)
+	if whole.do(func() { s = New(whole, "token") }) {
+		t.Fatalf("planting: %s", whole.said())
+	}
+	v = s.Get("token")
+	text = strings.Repeat("x", 100) + v + "\n"
+	sameHits(t, "a stream that ends with io.EOF", s.Reader("whole.log", strings.NewReader(text)), []Hit{{Name: "token", Check: CheckReader, Place: "whole.log", Offset: 100, Encoding: Raw, Count: 1}})
+	if said := whole.said(); strings.Contains(said, "cannot read") {
+		t.Errorf("a stream that ends with io.EOF said %q, want no line that it cannot read", said)
 	}
 }
 
