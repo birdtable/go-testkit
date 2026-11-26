@@ -147,7 +147,15 @@ import (
 // the docs, the package's "What it does not see" among them, that name Zip and what it does not
 // read. Read for removable code: no reader or search is added, a name and bytes go through the
 // functions Files and Reader use, and entry keeps an entry's close error with its read error.
-const Ceiling = 7385
+//
+// Raised by 62 to 7447, by measure, for canary.go (48 lines of code, 10 of doc, 4 blank): redact
+// names every run of 16 bytes or more of a needle, found through an index of each needle's 16-byte
+// runs built as a value is planted, in place of whole needles only; and Files reads a link's target
+// as text, the place "<path> (target)", through Root.Readlink. Read for removable code: redact's
+// skip of a run that started a byte before is the one line not needed for the answer, and it keeps
+// a long match from being walked once for each of its bytes, so it stays. Finding the runs is a
+// function of its own, spans, to keep redact under the linter's bound on complexity.
+const Ceiling = 7447
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
