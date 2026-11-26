@@ -1,10 +1,11 @@
 // Package canary plants fake secrets in a test and fails the test if one of them reaches a place it
-// must not: a file under a folder, a captured stream or log, or the text of a value. A program that
-// holds a token or a key is handed the planted values in its place, run, and then checked: every file
-// under its home and log folders, read as raw bytes, so a SQLite file and its -wal and -journal files
-// are covered with no driver; its stdout and stderr; and the String, Error and %+v of a value it
-// returned. Files reads each file's and folder's path below the folder too: a program that names a
-// file or a folder after a token has written it there.
+// must not: a file under a folder, an entry of a zip archive, a captured stream or log, or the text
+// of a value. A program that holds a token or a key is handed the planted values in its place, run,
+// and then checked: every file under its home and log folders, read as raw bytes, so a SQLite file
+// and its -wal and -journal files are covered with no driver; each entry of a zip archive it wrote,
+// a support bundle among them; its stdout and stderr; and the String, Error and %+v of a value it
+// returned. Files reads each file's and folder's path below the folder too, and Zip each entry's
+// name: a program that names a file or a folder after a token has written it there.
 //
 // Each check looks for each value as it is and re-encoded on the way out: as hex in both cases, as
 // standard and URL-safe base64 at each of the three alignments a value can have in a longer encoded
@@ -18,8 +19,11 @@
 // name in angle brackets, <name>.
 //
 // What it does not see:
-//   - A value compressed or encrypted (gzip, a zip archive), or written in an encoding the list above
-//     does not name, base32 among them.
+//   - A value compressed or encrypted, or written in an encoding the list above does not name,
+//     base32 among them. Zip reads each entry of a zip archive, Stored or Deflate, but not an
+//     encrypted entry's bytes, and it does not open a zip archive inside one, which it reads as an
+//     entry's bytes, so a value compressed in one of its entries is not found. No other archive
+//     format is read: tar, gzip and 7z files are raw bytes to Files, as a zip archive is.
 //   - A value the program decodes. The bytes a program holds after decoding the base64 or hex text
 //     it was handed, a value New plants among them, are another value, and no needle of the text
 //     finds them. Plant them too, beside the text: s.Own("<name>-bytes", string(raw)).
@@ -38,6 +42,7 @@
 package canary
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
@@ -97,21 +102,26 @@ const (
 	CheckReader = "Reader"
 	CheckBytes  = "Bytes"
 	CheckValue  = "Value"
+	CheckZip    = "Zip"
 )
+
+// encrypted is the bit of a zip entry's general purpose flags that marks it encrypted.
+const encrypted = 0x1
 
 // A Hit is one planted value found in one place, in one encoding. It holds the value's name, never
 // the value.
 type Hit struct {
 	Name     string // the name the value was planted under
-	Check    string // CheckFiles, CheckReader, CheckBytes or CheckValue
-	Place    string // the path below the folder, slash-separated, or the place the caller named, each value in it as <name>
-	Offset   int64  // the byte offset of the first hit in the place, or InPath for a hit in the path itself
+	Check    string // CheckFiles, CheckReader, CheckBytes, CheckValue or CheckZip
+	Place    string // the path below the folder, slash-separated, the archive's path, ! and the entry's name, or the place the caller named, each value in it as <name>
+	Offset   int64  // the byte offset of the first hit in the place, or InPath for a hit in the path or entry's name itself
 	Encoding string // one of the encodings above
 	Count    int    // how many times the value is in the place in this encoding
 }
 
 // InPath is a Hit's Offset when Files found the value in a file's or folder's path below the folder,
 // not in a file's bytes: the hit is in the last name of Place, or across it and the folders above.
+// It is also the Offset when Zip found the value in an entry's name, anywhere in it.
 const InPath = -1
 
 // needle is one encoding of one planted value, the bytes a check looks for, and for UTF-16 its twin,
@@ -122,8 +132,8 @@ type needle struct {
 }
 
 // A Set is the fake secrets one test planted, each under a name. It is made by New, takes values of
-// the caller's own by Own before its first check, and checks places by Files, Reader, Bytes and Value,
-// which may run side by side once every value is planted.
+// the caller's own by Own before its first check, and checks places by Files, Zip, Reader, Bytes and
+// Value, which may run side by side once every value is planted.
 type Set struct {
 	t       testing.TB
 	names   []string
@@ -282,7 +292,8 @@ func escapeRE() *regexp.Regexp { return regexp.MustCompile(`%[0-9A-F]{2}`) }
 // file and folder, links among them, and is the hits, nil when it found none. Each hit fails the
 // test. A hit in a path is at InPath, counted at the entry whose name it ends in. A file it cannot
 // read, and a dir that is missing or no folder, fail the test too, never skipped. It does not follow
-// a symbolic link, nor read a FIFO, a socket or a device.
+// a symbolic link, nor read a FIFO, a socket or a device. A zip archive it reads as raw bytes, like
+// any file: Zip reads its entries.
 func (s *Set) Files(dir string) []Hit {
 	s.t.Helper()
 	s.begin(CheckFiles)
@@ -302,7 +313,7 @@ func (s *Set) Files(dir string) []Hit {
 			s.errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
 			return nil
 		}
-		hits = append(hits, s.inPath(rel)...)
+		hits = append(hits, s.inName(CheckFiles, rel, rel, max(strings.LastIndexByte(rel, '/'), 0))...)
 		if !d.Type().IsRegular() {
 			return nil
 		}
@@ -316,14 +327,14 @@ func (s *Set) Files(dir string) []Hit {
 	return hits
 }
 
-// inPath is the hits in rel, a slash-separated path below the folder, that end past the folders
-// above its last name, whose own entries counted the rest, each at InPath and reported.
-func (s *Set) inPath(rel string) []Hit {
+// inName is the hits in name, a slash-separated path, that end past its first above bytes, which
+// Files gives as the folders above its last name, whose own entries counted the rest; each is at
+// InPath, with place as its place, and reported.
+func (s *Set) inName(check, place, name string, above int) []Hit {
 	s.t.Helper()
-	tl := tally{check: CheckFiles, place: s.redact(rel), index: map[[2]string]int{}}
-	above := max(strings.LastIndexByte(rel, '/'), 0)
+	tl := tally{check: check, place: s.redact(place), index: map[[2]string]int{}}
 	for _, nd := range s.needles {
-		tl.find(nd, []byte(rel), above)
+		tl.find(nd, []byte(name), above)
 	}
 	for i := range tl.hits {
 		tl.hits[i].Offset = InPath
@@ -348,6 +359,57 @@ func (s *Set) file(root *os.Root, rel string) ([]Hit, error) {
 		hits, err = s.scan(CheckFiles, rel, f)
 	}
 	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return hits, err
+}
+
+// Zip checks each entry of the zip archive at path, as Files checks a file: its name, a hit there at
+// InPath, and its bytes as archive/zip reads them, Stored or Deflate, through the same chunked read
+// as Reader, so its memory is a chunk whatever an entry's size. A hit's place is path as given, !,
+// and the entry's name. It is the hits, nil when it found none, and each hit fails the test. An
+// archive archive/zip cannot open, and an entry it cannot read, a compression method it does not
+// know or a checksum that does not match among them, fail the test too, never skipped. An encrypted
+// entry's name is read and its bytes are not, as no value could be found in them. A zip archive in
+// an entry is that entry's bytes, not opened.
+func (s *Set) Zip(path string) []Hit {
+	s.t.Helper()
+	s.begin(CheckZip)
+	r, err := zip.OpenReader(path)
+	if err != nil {
+		s.errorf("canary: Zip cannot open the archive %q: %v", path, err)
+		return nil
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			s.errorf("canary: Zip cannot close the archive %q: %v", path, err)
+		}
+	}()
+	var hits []Hit
+	for _, f := range r.File {
+		place := path + "!" + f.Name
+		hits = append(hits, s.inName(CheckZip, place, f.Name, 0)...)
+		if f.Flags&encrypted != 0 {
+			continue
+		}
+		found, err := s.entry(place, f)
+		if err != nil {
+			s.errorf("canary: Zip cannot read %q: %v", place, err)
+		}
+		hits = append(hits, found...)
+	}
+	return hits
+}
+
+// entry is the hits in the bytes of the zip entry f, at place, reported as Zip found them.
+func (s *Set) entry(place string, f *zip.File) ([]Hit, error) {
+	s.t.Helper()
+	rc, err := f.Open()
+	if err != nil {
+		return nil, err
+	}
+	hits, err := s.scan(CheckZip, place, rc)
+	if cerr := rc.Close(); err == nil {
 		err = cerr
 	}
 	return hits, err
