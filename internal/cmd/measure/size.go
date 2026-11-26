@@ -139,7 +139,15 @@ import (
 // Raised by 3 to 7323, by measure, for canary's package doc (canary.go, 3): a line under "What it
 // does not see" for bytes a program decodes from a planted value, with the way round, Own of the
 // bytes beside the text. Read for removable code: the change is doc only.
-const Ceiling = 7323
+//
+// Raised by 62 to 7385, by measure, for canary's Zip (canary.go, 62): Set.Zip, which opens the
+// archive with archive/zip and reads each entry's name through Files' own name search, now inName
+// with the check and place as arguments, and each entry's bytes through scan, the chunked read
+// Reader uses; entry, which opens and closes one entry; CheckZip and the encrypted flag's bit; and
+// the docs, the package's "What it does not see" among them, that name Zip and what it does not
+// read. Read for removable code: no reader or search is added, a name and bytes go through the
+// functions Files and Reader use, and entry keeps an entry's close error with its read error.
+const Ceiling = 7385
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
