@@ -93,7 +93,7 @@ func TestUnderNoNetworkAHelperChildReachesItsParentsListener(t *testing.T) {
 			t.Fatalf("the helper child ended %d, want 0, its request to its parent's listener %s made:\n%s", code, srv.URL, out)
 		}
 	case guardedChild:
-		r, err := (&http.Client{Timeout: 10 * time.Second}).Get(os.Getenv(guardedURL)) //nolint:noctx // a bounded request to the parent's listener
+		r, err := (&http.Client{Timeout: 10 * time.Second}).Get(os.Getenv(guardedURL)) //nolint:noctx,gosec // a bounded request; G704: the parent's own listener on loopback, which the test gave
 		if err != nil {
 			t.Fatalf("the helper child could not reach its parent's listener: %v", err)
 		}
