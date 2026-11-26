@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -591,9 +590,11 @@ func rootSub(r *repo, more string) {
 
 // headWork writes the workspace the head of a repository rootSub planted is read through, as
 // contain's CONTAIN_WORK writes the head's: the top and sub, with the root at v0.1.0 replaced by the
-// top, in a folder of the test's own. It is the file's path. The paths are real, and the repository is
-// read at its real path from then on: go matches the folder it runs in with the use lines, macOS's
-// temporary folder is reached through a link, and Windows' through a short name the runner's has.
+// top. It is the file's path. go matches the folder it runs in with the use lines as strings: it
+// takes that folder by its real path, macOS's temporary folder is reached through a link, and an
+// absolute use line is kept as written, so a slash line never prefixes a Windows folder. So the
+// repository is read at its real path from then on, and the file is in the top, untracked, with
+// paths relative to it, which go joins to the real path in the system's own form.
 func headWork(r *repo) string {
 	r.t.Helper()
 	top, err := filepath.EvalSymlinks(r.dir)
@@ -601,9 +602,8 @@ func headWork(r *repo) string {
 		r.t.Fatal(err)
 	}
 	r.dir = top
-	top = filepath.ToSlash(top)
-	work := filepath.Join(r.t.TempDir(), "go.work")
-	content := goLine(r.t) + "\n\nuse (\n\t" + strconv.Quote(top) + "\n\t" + strconv.Quote(top+"/sub") + "\n)\n\nreplace example.com/m v0.1.0 => " + strconv.Quote(top) + "\n"
+	work := filepath.Join(top, "go.work")
+	content := goLine(r.t) + "\n\nuse (\n\t.\n\t./sub\n)\n\nreplace example.com/m v0.1.0 => ./\n"
 	if err := os.WriteFile(work, []byte(content), 0o600); err != nil {
 		r.t.Fatal(err)
 	}
