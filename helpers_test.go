@@ -310,10 +310,11 @@ func TestARefusedProbeSkipsWithTheOneMessageAndPlantsNothing(t *testing.T) {
 }
 
 // recorder is a testing.TB that keeps the first skip or failure of what it runs, and ends it there as
-// a real one would, so no skip reaches the run's report. Its TempDir and the rest are t's.
+// a real one would, so no skip reaches the run's report. It keeps each line logged too, and passes it
+// to t. Its TempDir and the rest are t's.
 type recorder struct {
 	testing.TB
-	skipped, failed string
+	skipped, failed, logged string
 }
 
 // record runs f on a recorder of t, on a goroutine of its own, which a skip or a fatal failure ends.
@@ -338,6 +339,12 @@ func (r *recorder) Errorf(format string, args ...any) { r.failed += fmt.Sprintf(
 func (r *recorder) Fatal(args ...any)                 { r.Error(args...); runtime.Goexit() }
 func (r *recorder) Fatalf(format string, args ...any) { r.Errorf(format, args...); runtime.Goexit() }
 func (r *recorder) FailNow()                          { r.Fatal("FailNow") }
+func (r *recorder) Log(args ...any)                   { r.Logf("%s", fmt.Sprint(args...)) }
+func (r *recorder) Logf(format string, args ...any) {
+	r.TB.Helper()
+	r.logged += fmt.Sprintf(format, args...) + "\n"
+	r.TB.Logf(format, args...)
+}
 
 // What a Rerun keeps of a stream is its first outputCap bytes. A write that only reaches the cap does
 // not end the child; the first byte past it ends it with ErrOutputCap, and every write is taken whole.

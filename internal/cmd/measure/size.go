@@ -51,7 +51,12 @@ import (
 // Raised by 19 to 5992, by measure, for NoNetwork's Go resolver on Linux: nonetwork_linux.go's
 // withGoResolver appends netdns=go to the rerun's GODEBUG, keeping the caller's settings (17), and
 // nonetwork.go's doc says so and narrows the limit to programs that are not Go (2).
-const Ceiling = 5992
+//
+// Raised by 346 to 6338, by measure, for RequireMain, the check that every package's TestMain calls
+// Main: requiremain.go is 344, go list -e -json for darwin, linux and windows, the TestMain and its
+// call read with go/parser, the opt-out line, the file and build line that leave a TestMain out, go's
+// errors with the import they name, and its doc; and doc.go's two lines name it (2).
+const Ceiling = 6338
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

@@ -376,7 +376,7 @@ linters:
       # This repo: each test of these files that cannot run in parallel opens with "// serial: <why>"; it
       # sets the process's environment, runs Main inside the test binary's own, or holds
       # syscall.ForkLock, or changes the process's folder. paralleltest does not read that line.
-      - path: ^(main|binary|buildat|offline|isolated)_test\.go$
+      - path: ^(main|binary|buildat|offline|isolated|requiremain)_test\.go$
         linters: [paralleltest]
         text: "missing the call to method parallel"
       # This repo: the root's TestMain is the wrapper RerunVia's test runs behind, which writes its line
