@@ -432,8 +432,14 @@ func importPath(pkg string) bool {
 // modRoot is the folder of the go.mod nearest above the test's folder, the folder itself included,
 // and whether there is one.
 func modRoot() (string, bool) {
-	dir, err := os.Getwd()
-	if err != nil {
+	dir, _ := os.Getwd() // an error leaves "", which has none
+	return modRootOf(dir)
+}
+
+// modRootOf is the folder of the go.mod nearest above dir, dir itself included, and whether there is
+// one. An empty dir has none.
+func modRootOf(dir string) (string, bool) {
+	if dir == "" {
 		return "", false
 	}
 	for {
