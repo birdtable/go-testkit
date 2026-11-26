@@ -1,3 +1,0 @@
-kind: Fixed
-body: 'Isolate and Build refuse a Before, which only Main runs, a containment such as contain''s Contain among them, and Build refuses a RerunEnv, which only a Rerun calls: each was ignored, with nothing said, so a containment given to Isolate or Build held neither the tests nor the binary. Isolate returns an error and isolates nothing, and the Binary runs nothing and gives the refusal on Stderr; the refusal names the function and the option, and says to give it to Main.'
-time: 2026-11-26T10:06:00.000000+01:00
