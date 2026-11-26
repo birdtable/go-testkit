@@ -8,12 +8,14 @@
 //
 // Each check looks for each value as it is and re-encoded on the way out: as hex in both cases, as
 // standard and URL-safe base64 at each of the three alignments a value can have in a longer encoded
-// string, as a URL's query and path escaping, and as UTF-16, little and big endian. A hit fails the
-// test with the value's name, the check, the place, the byte offset and the encoding. It never shows
-// the value, any of its encodings, or the bytes around the hit, in a failure or a log, so a test log
-// that is kept or shared holds nothing a reader could take for the real secret's shape. A place,
-// a path or an error that holds one is shown with each value or encoding in it replaced by the
-// value's name in angle brackets, <name>.
+// string, as a URL's query and path escaping as Go's url.QueryEscape and url.PathEscape write them,
+// as UTF-16, little and big endian, and as its bytes in decimal, the way fmt's %v prints a []byte or
+// a [N]byte, the type a Go program most often holds a key in. A hit fails the test with the value's
+// name, the check, the place, the byte offset and the encoding. It never shows the value, any of
+// its encodings, or the bytes around the hit, in a failure or a log, so a test log that is kept or
+// shared holds nothing a reader could take for the real secret's shape. A place, a path or an error
+// that holds one is shown with each value or encoding in it replaced by the value's name in angle
+// brackets, <name>.
 //
 // What it does not see:
 //   - A value compressed or encrypted (gzip, a zip archive), or written in an encoding the list above
@@ -26,7 +28,8 @@
 //     has ended or closed its files.
 //   - Process memory, the network, and any file outside the folders a test names. Files does not
 //     follow a symbolic link, and it does not read a FIFO, a socket or a device, which could block the
-//     test.
+//     test. Of a regular file it reads the bytes and the path alone: not its extended attributes
+//     (macOS, Linux), nor a Windows alternate data stream.
 //
 // The package imports the standard library only.
 package canary
@@ -78,10 +81,11 @@ const (
 	HexUpper  = "HEX"       // uppercase hex
 	Base64    = "base64"    // standard base64, at any alignment, padded or not
 	Base64URL = "base64url" // URL-safe base64, at any alignment, padded or not
-	Query     = "query"     // url.QueryEscape, its hex digits in either case
-	Path      = "path"      // url.PathEscape, its hex digits in either case
+	Query     = "query"     // url.QueryEscape's exact output, its hex digits in either case, and no other escaper's
+	Path      = "path"      // url.PathEscape's exact output, its hex digits in either case, and no other escaper's
 	UTF16LE   = "utf16le"   // UTF-16, little endian, or of two orders one byte apart the one at an even offset
 	UTF16BE   = "utf16be"   // UTF-16, big endian, the same way
+	Decimal   = "decimal"   // each byte in decimal, single-spaced: the inside of fmt's %v of a []byte or [N]byte
 )
 
 // The checks a Hit names.
@@ -244,6 +248,7 @@ func encodings(name, value string) []needle {
 		be = binary.BigEndian.AppendUint16(be, u)
 	}
 	all = append(all, needle{name, UTF16LE, le, be}, needle{name, UTF16BE, be, le})
+	all = append(all, needle{name, Decimal, []byte(strings.Trim(fmt.Sprintf("%d", v), "[]")), nil})
 
 	var out []needle
 	for _, n := range all {

@@ -129,7 +129,13 @@ import (
 // Raised by 11 to 7315, by measure, for readGoMod (main.go, 11): baseWork's two go.mod reads go
 // through one function that reads by filepath.Clean and returns nothing on an error, as before, so
 // the two lines need no nolint directive.
-const Ceiling = 7315
+//
+// Raised by 5 to 7320, by measure, for canary's decimal needle (canary.go, 5): a value's bytes as
+// fmt's %v prints a []byte or a [N]byte, one line of code and its constant, and three lines of the
+// package doc, which names it and says Files reads no extended attribute or alternate data stream.
+// Read for removable code: the needle is fmt's own %d of the bytes, the same list as %v, with
+// its brackets cut, so no loop is added.
+const Ceiling = 7320
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
