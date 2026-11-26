@@ -176,7 +176,14 @@ import (
 // (5). Read for removable code: the Lstat check before the walk is the one part a later check also
 // covers, as a path that is no regular file is never read and so fails as a value not there; it
 // stays, so the line names what the path is in place of a missing value.
-const Ceiling = 7637
+//
+// Raised by 11 to 7648, by measure, for the expected file the walk saw (canary.go, 11): file checks,
+// with os.SameFile, that an expected file open is the one the walk saw, and reads it only then (6);
+// the errors import for that error (1); and two lines each of file's doc and Expect's, which say so
+// and name a drive or a share among the paths refused (4). The refusal of a drive or a share is
+// filepath.VolumeName in place of filepath.IsAbs, the same line. Read for removable code: a helper
+// for the check was tried and cost 8 lines more than it in place.
+const Ceiling = 7648
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

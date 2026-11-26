@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,4 +193,54 @@ func TestExpectRefusesAPathNotBelowTheFolderOrAnUnknownName(t *testing.T) {
 		t.Errorf("Expect of two values in one file stopped the test: %s", rec.said())
 	}
 	holdsNoRun(t, s, rec.said())
+}
+
+// TestFilesReadsNoExpectedFileThatIsNotTheOneTheWalkSaw: an expected file swapped, between the walk
+// and the open, for a link to another file in the folder that holds the value, or for that file itself,
+// is not read: it is an error, it gives no hit and it meets no expectation. A file expected nowhere is
+// read as it is found.
+//
+// What it costs when this fails: a program that swaps its secrets file for a link while the check runs
+// meets the expectation with another file's bytes, and the file named is never read.
+func TestFilesReadsNoExpectedFileThatIsNotTheOneTheWalkSaw(t *testing.T) {
+	t.Parallel()
+	for _, swap := range []string{"a link", "a file moved over it"} {
+		t.Run(swap, func(t *testing.T) {
+			t.Parallel()
+			rec, s, dir := expectSet(t)
+			tok := s.Get("token")
+			put(t, dir, "secrets.json", "{}")
+			put(t, dir, "other.json", tok)
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = root.Close() })
+			info, err := root.Lstat("secrets.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			saw := fs.FileInfoToDirEntry(info)
+			secrets := filepath.Join(dir, "secrets.json")
+			if swap == "a link" {
+				if err := os.Remove(secrets); err != nil {
+					t.Fatal(err)
+				}
+				testkit.Link(t, "other.json", secrets)
+			} else {
+				put(t, dir, "moved.json", tok)
+				if err := os.Rename(filepath.Join(dir, "moved.json"), secrets); err != nil {
+					t.Fatal(err)
+				}
+			}
+			hits, seen, err := s.file(root, "secrets.json", saw, []string{"token"})
+			if err == nil || hits != nil || seen != nil {
+				t.Errorf("the expected file swapped for %s: %+v, %q, %v; want no hits, no value seen and an error", swap, hits, seen, err)
+			}
+			if hits, seen, err := s.file(root, "secrets.json", saw, nil); len(hits) != 1 || seen != nil || err != nil {
+				t.Errorf("a file expected nowhere swapped for %s: %+v, %q, %v; want its one hit", swap, hits, seen, err)
+			}
+			holdsNoRun(t, s, rec.said())
+		})
+	}
 }

@@ -54,6 +54,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -338,9 +339,11 @@ type Expected struct {
 // path itself, a file's or a folder's name, in a link's target or in any other file, and any other
 // value in the expected file, are hits as before. A path that names nothing, a folder, a link or no
 // regular file fails the test, and so does a path whose bytes do not hold the value, so no check
-// passes because a path was named. Only the Expected's Files excuses anything: the Set's own Files
-// and Zip, Reader, Bytes and Value do not take it. An unknown name, no path, a path that is absolute or
-// leaves the folder, and a path named twice for one name stop the test.
+// passes because a path was named; an expected file that is not, when open, the file the walk saw
+// there, as when a link is swapped in for it, is not read and fails the test. Only the Expected's Files
+// excuses anything: the Set's own Files and Zip, Reader, Bytes and Value do not take it. An unknown
+// name, no path, a path that is absolute, names a drive or a share, or leaves the folder, and a path
+// named twice for one name stop the test.
 func (s *Set) Expect(name string, paths ...string) *Expected {
 	s.t.Helper()
 	return (&Expected{s: s, names: map[string][]string{}}).Expect(name, paths...)
@@ -358,7 +361,7 @@ func (e *Expected) Expect(name string, paths ...string) *Expected {
 	}
 	for _, p := range paths {
 		c := path.Clean(filepath.ToSlash(p))
-		if p == "" || c == "." || filepath.IsAbs(p) || !fs.ValidPath(c) {
+		if p == "" || c == "." || filepath.VolumeName(p) != "" || !fs.ValidPath(c) {
 			e.s.fatalf("canary: Expect of %q refuses the path %q: it names no file below the folder", name, p)
 		}
 		if slices.Contains(e.names[c], name) {
@@ -414,7 +417,7 @@ func (s *Set) files(dir string, e *Expected) []Hit {
 				found, err = nil, nil
 			}
 		case d.Type().IsRegular():
-			found, seen[rel], err = s.file(root, rel, want[rel])
+			found, seen[rel], err = s.file(root, rel, d, want[rel])
 		}
 		if err != nil {
 			s.errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
@@ -531,8 +534,10 @@ func (s *Set) target(root *os.Root, rel string) ([]Hit, error) {
 
 // file is the hits in the file rel beneath root, reported as Files found them, none when rel is no
 // longer a regular file by the time it is open, but those of the values named in expected, whose
-// names it gives apart: the values found that the file was expected to hold.
-func (s *Set) file(root *os.Root, rel string, expected []string) ([]Hit, []string, error) {
+// names it gives apart: the values found that the file was expected to hold. An expected file open
+// that is not the one the walk saw as d, as when a link swapped in leads to another, is not read, and
+// is an error.
+func (s *Set) file(root *os.Root, rel string, d fs.DirEntry, expected []string) ([]Hit, []string, error) {
 	s.t.Helper()
 	// O_NONBLOCK opens a FIFO swapped in since the walk at once, in place of waiting for a writer.
 	// Windows has no FIFO in a folder, and its open reads nothing of the bit.
@@ -543,6 +548,12 @@ func (s *Set) file(root *os.Root, rel string, expected []string) ([]Hit, []strin
 	var hits []Hit
 	var seen []string
 	info, err := f.Stat()
+	if err == nil && info.Mode().IsRegular() && expected != nil {
+		var saw fs.FileInfo
+		if saw, err = d.Info(); err == nil && !os.SameFile(saw, info) {
+			err = errors.New("the file open is not the file the walk saw there")
+		}
+	}
 	if err == nil && info.Mode().IsRegular() {
 		hits, err = s.read(CheckFiles, rel, f)
 		hits = slices.DeleteFunc(hits, func(h Hit) bool {
