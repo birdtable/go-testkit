@@ -32,6 +32,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -229,8 +230,8 @@ func encodings(name, value string) []needle {
 	units := utf16.Encode([]rune(value))
 	le, be := make([]byte, 0, 2*len(units)), make([]byte, 0, 2*len(units))
 	for _, u := range units {
-		le = append(le, byte(u), byte(u>>8))
-		be = append(be, byte(u>>8), byte(u))
+		le = binary.LittleEndian.AppendUint16(le, u)
+		be = binary.BigEndian.AppendUint16(be, u)
 	}
 	all = append(all, needle{name, UTF16LE, le}, needle{name, UTF16BE, be})
 

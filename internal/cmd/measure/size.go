@@ -104,11 +104,11 @@ import (
 // leave a TestMain out, a package a pattern names that a system builds nothing of passed, go's errors
 // with the import they name, and its doc; and doc.go's two lines name it (2).
 //
-// Raised by 446 to 7050, by measure, for canary, the planted fake secrets a test checks files,
-// streams and values for: canary.go is 446, the plant and its refusals, each value's needles in raw,
+// Raised by 447 to 7051, by measure, for canary, the planted fake secrets a test checks files,
+// streams and values for: canary.go is 447, the plant and its refusals, each value's needles in raw,
 // hex, base64 at three alignments, URL escaping and UTF-16, the chunked read that keeps a tail so a
 // value across two chunks is found, the four checks and their report, and the package doc's limits.
-const Ceiling = 7050
+const Ceiling = 7051
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
