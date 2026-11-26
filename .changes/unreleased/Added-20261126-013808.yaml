@@ -1,3 +1,0 @@
-kind: Added
-body: 'RequireMain, a check for one test at the module root: it lists the module''s packages with go list for darwin, linux and windows, and fails each package with tests whose TestMain is missing, left out on a system, or does not call Main itself, naming the package, the systems and the reason. A package opts out with a //testkit:unisolated line and its reason, which is logged on every run.'
-time: 2026-11-26T01:38:08.000000+01:00
