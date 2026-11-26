@@ -77,7 +77,7 @@ Linux, macOS and Windows alike. A package that cannot call it opts out with a
 |---|---|
 | [`testkit`](https://pkg.go.dev/github.com/birdtable/go-testkit) | Runs a package's tests in an environment of their own, with checks (`NoLeaks`, `NoOpenFiles`, `Isolated`), a bounded rerun (`Rerun`), probes (`Link`, `Modes`, `OtherAccount`) and `Scale` for waits under `-race` and load. |
 | [`fake`](https://pkg.go.dev/github.com/birdtable/go-testkit/fake) | Builds a stand-in program that prints, writes, runs and exits as told, the same on every system, in place of a shell script. |
-| [`canary`](https://pkg.go.dev/github.com/birdtable/go-testkit/canary) | Plants fake secrets and fails the test if one reaches a file, a SQLite file, a log or a returned value, raw or encoded, never printing the value. |
+| [`canary`](https://pkg.go.dev/github.com/birdtable/go-testkit/canary) | Plants fake secrets and fails the test if one reaches a file, a SQLite file, an entry of a zip archive, a log or a returned value, raw or encoded, never printing the value. |
 | [`contain`](contain) | A module of its own: reruns the test binary inside a containment, so a test that signals or mounts reaches nothing outside it. |
 | [`taskfile`](taskfile) | A module of its own: checks in a test that a repository's Taskfile.yml calls Go and keeps no logic in shell. |
 | [`cmd/apigate`](https://pkg.go.dev/github.com/birdtable/go-testkit/cmd/apigate) | The API gate of one module: the systems differ only as declared, breaking changes are listed, and the stability marks hold. |
