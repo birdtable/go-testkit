@@ -92,7 +92,12 @@ import (
 // errIsolateGuard, with the Before and RerunEnv docs saying who refuses them (testkit.go, 21); Build
 // refuses through refusedPkg (binary.go, 4); BuildAt fails the test (buildat.go, 4); and NoNetwork's doc
 // says Build and BuildAt refuse it too (nonetwork.go, 1).
-const Ceiling = 6223
+//
+// Raised by 16 to 6239, by measure, for the release tier's time on macOS: BuildAt reads the test's
+// folder in one place and buildAtIn resolves from a folder it is given, so BuildAt's own tests that
+// need no chdir run in parallel (buildat.go, 7); and modRootOf is modRoot from a given folder, which
+// modRoot and sourceAt share (binary.go, 9).
+const Ceiling = 6239
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

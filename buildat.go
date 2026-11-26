@@ -46,13 +46,20 @@ import (
 // go's output on Stderr.
 func BuildAt(t testing.TB, ref, pkg string, opts ...Option) *Binary {
 	t.Helper()
+	return buildAtIn(t, "", ref, pkg, opts...) // "": the test's folder
+}
+
+// buildAtIn is BuildAt from the folder from, or the test's where from is empty: the repository and its
+// module are the ones from is in. Given a folder, it reads no cwd, so BuildAt's own tests run in parallel.
+func buildAtIn(t testing.TB, from, ref, pkg string, opts ...Option) *Binary {
+	t.Helper()
 	if err := mainOnly("BuildAt", opts); err != nil {
 		t.Fatalf("testkit: BuildAt of %q at %q: %v", pkg, ref, err)
 	}
 	if inForce().set == nil {
 		t.Fatalf("testkit: BuildAt of %q at %q: no Isolate is in force, and git would read the person's configuration", pkg, ref)
 	}
-	at, err := sourceAt(gitPath(t, exec.LookPath), ref, pkg)
+	at, err := sourceAt(gitPath(t, exec.LookPath), from, ref, pkg)
 	if err != nil {
 		t.Fatalf("testkit: BuildAt of %q at %q: %v", pkg, ref, err)
 	}
@@ -66,9 +73,9 @@ type source struct {
 	git, top, commit, dir, target string
 }
 
-// sourceAt is the source of pkg at ref in the repository the test runs in, read by git, or why there
-// is none. It refuses a ref or a pkg that starts with -, and an absolute pkg, before git runs.
-func sourceAt(git, ref, pkg string) (source, error) {
+// sourceAt is the source of pkg at ref in the repository the folder from is in, read by git, or why
+// there is none. It refuses a ref or a pkg that starts with -, and an absolute pkg, before git runs.
+func sourceAt(git, from, ref, pkg string) (source, error) {
 	switch {
 	case strings.HasPrefix(ref, "-"):
 		return source{}, errors.New("refused the ref, which starts with -, so git would read it as an option")
@@ -77,7 +84,7 @@ func sourceAt(git, ref, pkg string) (source, error) {
 	case filepath.IsAbs(pkg):
 		return source{}, errors.New("refused the package, an absolute path, which names a folder of today's tree: name it by its path in the module, or by its import path")
 	}
-	mod, ok := modRoot()
+	mod, ok := modRootOf(from)
 	if !ok {
 		return source{}, errors.New("the test's folder has no go.mod above it")
 	}

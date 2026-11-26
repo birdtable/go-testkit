@@ -183,13 +183,13 @@ func gitState(t *testing.T, repo string) map[string]string {
 // What it costs when this fails: an upgrade test runs today's code twice and proves nothing, or a
 // test that builds an old release writes into the repository it runs in.
 func TestBuildAtBuildsAnEarlierReleaseBesideTheCurrentOneAndLeavesGitAsItWas(t *testing.T) {
-	// serial: t.Chdir into the repository.
+	t.Parallel() // through buildAtIn, from the module's folder; the serial tests cover BuildAt reading the test's folder
 	repo := upgradeRepo(t)
 	before := gitState(t, repo)
-	t.Chdir(filepath.Join(repo, "app", "cmd"))
+	from := filepath.Join(repo, "app", "cmd")
 	home := t.TempDir()
-	old := BuildAt(t, "v0.1.0", "cmd/upg").Env("HOME="+home, "USERPROFILE="+home)
-	cur := BuildAt(t, "HEAD", "example.invalid/upg/cmd/upg").Env("HOME="+home, "USERPROFILE="+home)
+	old := buildAtIn(t, from, "v0.1.0", "cmd/upg").Env("HOME="+home, "USERPROFILE="+home)
+	cur := buildAtIn(t, from, "HEAD", "example.invalid/upg/cmd/upg").Env("HOME="+home, "USERPROFILE="+home)
 	ran := 0
 	for _, tc := range []struct {
 		b    *Binary
@@ -210,7 +210,7 @@ func TestBuildAtBuildsAnEarlierReleaseBesideTheCurrentOneAndLeavesGitAsItWas(t *
 		t.Errorf("HEAD read: %+v, want the colour v0.1.0 wrote, read from format 1", r)
 	}
 	sha := gitIn(t, repo, "rev-parse", "v0.1.0^{commit}")
-	if byHash, byTag := BuildAt(t, sha, "cmd/upg").Path(), old.Path(); byHash == "" || byHash != byTag {
+	if byHash, byTag := buildAtIn(t, from, sha, "cmd/upg").Path(), old.Path(); byHash == "" || byHash != byTag {
 		t.Errorf("the build of %s is %q and that of v0.1.0 %q, want the one build", sha, byHash, byTag)
 	}
 	after := gitState(t, repo)
@@ -391,15 +391,14 @@ func fileURL(dir string) string {
 // What it costs when this fails: a CI checkout with filter: blob:none makes every BuildAt reach the
 // network from a test, with what credentials the checkout left, and write into .git.
 func TestBuildAtInAPartialCloneFetchesNothingAndSaysTheCloneIsPartial(t *testing.T) {
-	// serial: t.Chdir into the clone.
+	t.Parallel() // buildAtIn, as BuildAt from the clone's folder
 	src := upgradeRepo(t)
 	gitIn(t, src, "config", "uploadpack.allowFilter", "true")
 	parent := t.TempDir()
 	gitIn(t, parent, "clone", "-q", "--filter=blob:none", fileURL(src), "clone")
 	clone := filepath.Join(parent, "clone")
 	before := gitState(t, clone)
-	t.Chdir(filepath.Join(clone, "app", "cmd"))
-	r := BuildAt(t, "v0.1.0", "cmd/upg").Run("version")
+	r := buildAtIn(t, filepath.Join(clone, "app", "cmd"), "v0.1.0", "cmd/upg").Run("version")
 	if r.Code != -1 || !strings.Contains(r.Stderr, "the clone is partial") || !strings.Contains(r.Stderr, "lacks the tree of") {
 		t.Errorf("v0.1.0 in a blobless clone: %+v, want code -1 and an error saying the clone is partial and lacks the tree", r)
 	}
@@ -423,7 +422,7 @@ func TestBuildAtInAPartialCloneFetchesNothingAndSaysTheCloneIsPartial(t *testing
 // What it costs when this fails: a refusal on safety, a path or link that climbs out of the build's
 // folder, reads as a missing object in a partial clone, and its advice (fetch, clone again) hides it.
 func TestBuildAtInAPartialCloneSaysARefusalAsItIsAndNotAsAMissingTree(t *testing.T) {
-	// serial: t.Chdir into the clone.
+	t.Parallel() // as above
 	src := upgradeRepo(t)
 	gitIn(t, src, "config", "uploadpack.allowFilter", "true")
 	scratch := t.TempDir()
@@ -448,8 +447,7 @@ func TestBuildAtInAPartialCloneSaysARefusalAsItIsAndNotAsAMissingTree(t *testing
 	gitIn(t, parent, "clone", "-q", "--filter=blob:none", fileURL(src), "clone")
 	clone := filepath.Join(parent, "clone")
 	gitIn(t, clone, "cat-file", "blob", blob) // fetched here, with no GIT_NO_LAZY_FETCH, so the clone holds it
-	t.Chdir(filepath.Join(clone, "app", "cmd"))
-	r := BuildAt(t, "dup", "cmd/upg").Run("version")
+	r := buildAtIn(t, filepath.Join(clone, "app", "cmd"), "dup", "cmd/upg").Run("version")
 	if r.Code != -1 || !strings.Contains(r.Stderr, "unpacking dup") || strings.Contains(r.Stderr, "partial") {
 		t.Errorf("a tree naming dup twice, in a blobless clone that holds it: %+v, want code -1 and the refusal of dup, not said as a partial clone", r)
 	}
@@ -483,7 +481,7 @@ func main() { fmt.Printf("%q %q", note, extra) }
 // What it costs when this fails: Git LFS set up in the repository's config runs for an old tree's
 // files, may download, and writes beneath .git; or the build sees a tree no checkout gives.
 func TestBuildAtReadsTheTreeAsCommitted(t *testing.T) {
-	// serial: t.Chdir into the repository.
+	t.Parallel() // buildAtIn, as BuildAt from the repository's folder
 	repo := t.TempDir()
 	gitIn(t, repo, "init", "-q")
 	smudged := filepath.ToSlash(filepath.Join(repo, ".git", "smudged"))
@@ -502,8 +500,7 @@ func TestBuildAtReadsTheTreeAsCommitted(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "-m", "the submodule")
 	gitIn(t, repo, "tag", "v0.1.0")
 	before := gitState(t, repo)
-	t.Chdir(filepath.Join(repo, "app"))
-	if r := BuildAt(t, "v0.1.0", "cmd/raw").Run(); r.Code != 0 || r.Stdout != `"raw\n" "kept\n"` {
+	if r := buildAtIn(t, filepath.Join(repo, "app"), "v0.1.0", "cmd/raw").Run(); r.Code != 0 || r.Stdout != `"raw\n" "kept\n"` {
 		t.Errorf("the tree as committed: %+v, want code 0 and %q", r, `"raw\n" "kept\n"`)
 	}
 	after := gitState(t, repo)
@@ -517,37 +514,40 @@ func TestBuildAtReadsTheTreeAsCommitted(t *testing.T) {
 }
 
 // TestBuildAtBuildsWithGOWORKOffWhateverGoWorkIsNear: BuildAt builds an earlier commit with GOWORK=off,
-// so neither a go.work in a folder above the build's folder, where the temp folder is, nor one the old
-// tree commits beside its go.mod decides its modules: each would make go build fail with "no modules
-// were found in the current workspace". The planted red of each row is GOWORK left unset in the
-// build's environment.
+// so a go.work in a folder above the build's folder, where the temp folder is, does not decide its
+// modules: it would make go build fail with "no modules were found in the current workspace". The
+// planted red is GOWORK left unset in the build's environment. Its twin below has the go.work the
+// old tree commits.
 //
 // What it costs when this fails: a stray go.work in the temp folder, another account's in /tmp or the
 // person's own, fails every BuildAt build with go's workspace error, far from its cause.
 func TestBuildAtBuildsWithGOWORKOffWhateverGoWorkIsNear(t *testing.T) {
 	// serial: t.Chdir into the repository and t.Setenv of the temp folder.
-	const work = "go 1.27\n"
-	ran := 0
-	for _, row := range []string{"a go.work above the build's folder", "a go.work the old tree commits"} {
-		ran++
-		repo := upgradeRepo(t)
-		if row == "a go.work the old tree commits" {
-			writeTree(t, repo, map[string]string{"app/go.work": work})
-			gitIn(t, repo, "add", "-A")
-			gitIn(t, repo, "commit", "-q", "-m", "a go.work that uses nothing")
-		} else {
-			tmp := t.TempDir()
-			writeTree(t, tmp, map[string]string{"go.work": work})
-			for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
-				t.Setenv(k, tmp)
-			}
-		}
-		t.Chdir(filepath.Join(repo, "app"))
-		if r := BuildAt(t, "HEAD", "cmd/upg").Run("version"); r.Code != 0 || r.Stdout != "0.2.0\n" {
-			t.Errorf("%s: %+v, want code 0 and the version", row, r)
-		}
+	repo := upgradeRepo(t)
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{"go.work": "go 1.27\n"})
+	for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(k, tmp)
 	}
-	if ran != 2 {
-		t.Fatalf("ran %d rows, want 2", ran)
+	t.Chdir(filepath.Join(repo, "app"))
+	if r := BuildAt(t, "HEAD", "cmd/upg").Run("version"); r.Code != 0 || r.Stdout != "0.2.0\n" {
+		t.Errorf("a go.work above the build's folder: %+v, want code 0 and the version", r)
+	}
+}
+
+// TestBuildAtBuildsWithGOWORKOffOverAGoWorkTheOldTreeCommits: a go.work the old tree commits beside
+// its go.mod, which uses nothing, does not decide the build's modules either. The planted red is GOWORK
+// left unset in the build's environment: go build fails with "no modules were found in the current
+// workspace".
+//
+// What it costs when this fails: an old release that committed its go.work cannot be built at all.
+func TestBuildAtBuildsWithGOWORKOffOverAGoWorkTheOldTreeCommits(t *testing.T) {
+	t.Parallel() // through buildAtIn, as above
+	repo := upgradeRepo(t)
+	writeTree(t, repo, map[string]string{"app/go.work": "go 1.27\n"})
+	gitIn(t, repo, "add", "-A")
+	gitIn(t, repo, "commit", "-q", "-m", "a go.work that uses nothing")
+	if r := buildAtIn(t, filepath.Join(repo, "app"), "HEAD", "cmd/upg").Run("version"); r.Code != 0 || r.Stdout != "0.2.0\n" {
+		t.Errorf("a go.work the old tree commits: %+v, want code 0 and the version", r)
 	}
 }
