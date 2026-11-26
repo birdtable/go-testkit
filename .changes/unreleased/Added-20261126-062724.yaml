@@ -1,3 +1,0 @@
-kind: Added
-body: 'cmd/apigate: -before-head, off by default, leaves the tags on the head out of check 2''s base, for a gate that runs at its own tag: the base is the newest tag that is an ancestor of the head and does not point at it, so the run at v0.2.0 holds the breaks since v0.1.0, and a head whose only tags are its own holds no break, as with no tag.'
-time: 2026-11-26T06:27:24.089653+01:00
