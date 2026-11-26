@@ -18,17 +18,23 @@ import (
 // the system's resolver fails. Loopback stays open, so an httptest server works. Main sets the guard
 // before any test runs, and then proves it: a TCP connect to 192.0.2.1:9 (TEST-NET-1, which is never
 // routed) must fail at once with the guard's own error, and a connect to a listener on 127.0.0.1 must
-// succeed. Isolate alone sets no guard.
+// succeed. Isolate runs no Before, so Isolate given NoNetwork returns an error and isolates nothing.
 //
 // On macOS Main calls the system sandbox's sandbox_init on the test process itself, with a profile that
 // denies every outbound connection but to localhost and to a Unix socket, and denies the resolver's
 // socket and service; the sandbox holds every thread of the process and everything it starts. On Linux
 // Main reruns the test binary in a user and network namespace of its own, where only loopback is up: its
 // first child, root of that namespace, brings loopback up, and runs the tests as its own child in a
-// nested user namespace, with the caller's uid and gid and no capability. Main returns their exit code.
-// The rerun is handed on by RerunEnv, so a child of Rerun is already inside and does not nest again. The
-// rerun's GODEBUG ends with netdns=go, after the settings the caller gave it, so the test binary and a
-// Go program it starts with that environment look a name up with Go's own resolver, which fails there.
+// nested user namespace, with the caller's uid and gid. Main returns their exit code. A caller that is not
+// uid 0 holds no capability there. A uid 0 caller's tests hold every capability of that nested user
+// namespace and none over the network namespace, which the root's owns, so the guard holds. Beside the
+// contain module, NoNetwork goes first: Main(m, NoNetwork(), contain.Contain()). As uid 0 the other
+// order is refused, and Main's error says to put NoNetwork first.
+// The tests' environment keeps the guard's marker, set as the tests checked their namespace, before the
+// probe, and RerunEnv hands it to a child of Rerun, so a start of the test binary inside the guard, a
+// fuzz worker or a helper child started by os/exec too, checks itself and probes again, and does not nest. The rerun's GODEBUG ends with netdns=go, after the
+// settings the caller gave it, so the test binary and a Go program it starts with that environment look
+// a name up with Go's own resolver, which fails there.
 //
 // Where the guard cannot be set, or the probe fails, Main returns 1 and an error that names the system
 // and the reason, and no test runs. Windows gives an unprivileged process no way to refuse outbound
@@ -56,9 +62,34 @@ import (
 func NoNetwork(unguardedOn ...string) Option {
 	unguarded := slices.Clone(unguardedOn)
 	return Options(
-		Before(func(start []string) (int, bool, error) { return noNetwork(start, unguarded) }),
+		Before(func(start []string) (int, bool, error) { return noNetwork(start, unguarded, guardHere) }),
 		RerunEnv(guardRerunEnv),
+		Keep(guardVar), // isolate keeps the guard's own value alone, once the tests checked in (guardVar)
+		func(c *conf) { c.guard = true },
 	)
+}
+
+// guardVar carries the part of the guard a process is, on Linux, from the process that made the
+// namespaces to the one it starts. It is testkit's own, never a name a caller sets. Its value is
+// "init:<uid>:<gid>:<net>" for the root of the new namespaces, or "run:<net>" for the tests, net being
+// the link of the network namespace the run started in (/proc/self/ns/net, "net:[<inode>]"). Main keeps
+// "run:<net>" in the tests' environment once the tests checked their namespace, before the probe, and no
+// other value of it on any system, so each start of the test binary inside the guard (a fuzz worker, a
+// helper child) checks itself and probes again, and does not nest; RerunEnv hands it to a child of Rerun too. A stray value never opens the network: a run
+// is guarded only in a network namespace other than that one where every interface that is up is
+// loopback, and only once the probe passes there; a run in another namespace where one is up that is not
+// loopback refuses, naming it, and never starts the namespaces again; any other run starts them itself.
+const guardVar = "TESTKIT_NONETWORK"
+
+// withoutGuardVar is environ with guardVar left out.
+func withoutGuardVar(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, guardVar+"=") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // knownOS is every GOOS that go tool dist list names: a name of unguardedOn is one of them.
@@ -69,17 +100,21 @@ func hostOS() string {
 	return runtime.GOOS //nolint:forbidigo // arch.ports.1: the API names a system by GOOS, so the name is matched, not branched on
 }
 
-// noNetwork is NoNetwork's Before: it sets the guard on this system and probes it, or, where it cannot,
-// fails the run, unless unguarded names this system.
-func noNetwork(start, unguarded []string) (int, bool, error) {
+// noNetwork is NoNetwork's Before: it sets the guard on this system by step, which is guardHere, and
+// probes it, or, where it cannot, fails the run, unless unguarded names this system. An error of step
+// ends the run whatever its done says, with 1 where its code is 0, so no test runs unguarded past it.
+func noNetwork(start, unguarded []string, step func([]string) (int, bool, string, error)) (int, bool, error) {
 	for _, name := range unguarded {
 		if !slices.Contains(knownOS, name) {
 			return 1, true, fmt.Errorf("NoNetwork was given %q, which is no GOOS, so no test ran: name each system as GOOS does (%s)", name, strings.Join(knownOS, ", "))
 		}
 	}
-	code, done, why, err := guardHere(start)
+	code, done, why, err := step(start)
+	if err != nil && code == 0 {
+		code = 1
+	}
 	if done || err != nil {
-		return code, done, err
+		return code, true, err
 	}
 	if why == "" {
 		if why = probe(probeTarget, probeRefusal); why == "" {

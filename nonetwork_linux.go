@@ -21,15 +21,6 @@ import (
 // probeRefusal is the error a connect gets in a network namespace where only loopback is up: no route.
 const probeRefusal = syscall.ENETUNREACH
 
-// guardVar carries the part of the guard a process is, from the process that made the namespaces to the
-// one it starts. It is testkit's own, never a name a caller sets: Isolate keeps it from the tests, and
-// RerunEnv hands it to a child of Rerun. Its value is "init:<uid>:<gid>:<net>" for the root of the new
-// namespaces, or "run:<net>" for the tests, net being the link of the network namespace the run started
-// in (/proc/self/ns/net, "net:[<inode>]"). A stray value decides nothing: a run is guarded only in a
-// network namespace other than that one whose every interface is loopback, and only once the probe
-// passes there; any other run starts the namespaces itself.
-const guardVar = "TESTKIT_NONETWORK"
-
 // The parts guardVar names.
 const (
 	guardInit = "init" // root of the new user and network namespace: brings loopback up and starts the tests
@@ -44,15 +35,20 @@ const guardReady = "guarded"
 const netLink = "/proc/self/ns/net"
 
 // The seams of testkit's own tests of a refusal, each written only by them, before Main, and each able
-// only to make the guard fail: guardCloneflags the namespaces the root is made in, and loopbackName the
-// interface it brings up.
+// only to make the guard fail: guardCloneflags the namespaces the root is made in, loopbackName the
+// interface it brings up, extraInterfaces those wayOut sees beside the system's, which can only add
+// one and so never hide one of the system's, and runNetLink the link the tests read to learn where they
+// run, which a test names a link of no namespace by.
 var (
-	guardCloneflags uintptr = syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET //nolint:gochecknoglobals // a refusal's test writes flags the system refuses
-	loopbackName            = "lo"                                         //nolint:gochecknoglobals // a refusal's test writes an interface there is none of
+	extraInterfaces []net.Interface                                                //nolint:gochecknoglobals // a test adds an interface the namespace does not hold
+	guardCloneflags uintptr         = syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET //nolint:gochecknoglobals // a refusal's test writes flags the system refuses
+	loopbackName                    = "lo"                                         //nolint:gochecknoglobals // a refusal's test writes an interface there is none of
+	runNetLink                      = netLink                                      //nolint:gochecknoglobals // a refusal's test writes a link of no namespace
 )
 
-// guardedFrom is the network namespace this run started in, set once the probe passed in a run that is
-// the tests of the guard, and read by RerunEnv for a child of Rerun.
+// guardedFrom is the network namespace this run started in, set in a run that is the tests of the guard
+// once they checked their namespace, before the probe, and read by RerunEnv and isolate for a child,
+// which checks and probes again: where the probe then fails, no child of the run is guarded by it.
 var guardedFrom atomic.Pointer[string] //nolint:gochecknoglobals // set once by Main, before any test, read by Rerun from parallel tests
 
 // guardHere is NoNetwork on Linux. The first run starts the namespaces' root and returns its tests' exit
@@ -61,7 +57,16 @@ func guardHere(start []string) (code int, done bool, why string, err error) {
 	part, arg, _ := strings.Cut(lookup(start, guardVar), ":")
 	switch part {
 	case guardRun:
-		if here, err := os.Readlink(netLink); err == nil && arg != "" && here != arg && onlyLoopback() {
+		here, err := os.Readlink(runNetLink)
+		if err != nil {
+			// The guard cannot tell its own namespace from the run's, so it refuses and never nests again.
+			return 0, false, "the network namespace the tests run in cannot be read: " + err.Error(), nil
+		}
+		if arg != "" && here != arg {
+			// The guard's own namespace, or one like it: its tests run, or refuse, and never nest again.
+			if why := wayOut(); why != "" {
+				return 0, false, why, nil
+			}
 			guardedFrom.Store(&arg)
 			return 0, false, "", nil
 		}
@@ -103,7 +108,7 @@ func guardFirst(start []string) (code int, done bool, why string, err error) {
 		GidMappingsEnableSetgroups: false,
 		Pdeathsig:                  syscall.SIGKILL,
 	}
-	code, why, err = runGuarded(cmd, r, w)
+	code, why, err = runGuarded(cmd, r, w, uid)
 	return code, why == "", why, err
 }
 
@@ -152,7 +157,7 @@ func guardRoot(arg string) (code int, ok bool) {
 		GidMappingsEnableSetgroups: false,
 		Pdeathsig:                  syscall.SIGKILL,
 	}
-	code, why, err := runGuarded(cmd, nil, ready)
+	code, why, err := runGuarded(cmd, nil, ready, uid)
 	if why != "" {
 		_, _ = fmt.Fprintln(ready, why) //nolint:errcheck // as above
 		return 1, true
@@ -163,10 +168,32 @@ func guardRoot(arg string) (code int, ok bool) {
 	return code, true
 }
 
+// containedVar is the contain module's marker of a run inside its containment (contain's containVar),
+// which the tests' environment holds where contain.Contain came before NoNetwork in Main's options.
+const containedVar = "TESTKIT_CONTAINED"
+
+// namespaceRefused is why the guard was not set where the system refused to start a namespace with err,
+// uid being the caller's and contained whether contain's marker is in the run's environment. As uid 0
+// a refusal of permission inside contain's containment is the capability it dropped before NoNetwork
+// ran, so it says to put NoNetwork first; as uid 0 outside it, it is most often a container's seccomp
+// profile, so it says that, and never names an option the caller did not pass.
+func namespaceRefused(err error, uid int, contained bool) string {
+	why := "the system refused the namespace: " + err.Error()
+	switch {
+	case uid != 0 || !errors.Is(err, syscall.EPERM):
+	case contained:
+		why += "; as uid 0 inside contain's containment, which dropped the capability to make it: put NoNetwork before contain.Contain in Main's options"
+	default:
+		why += "; as uid 0, this is most often a container's seccomp profile that refuses a new user namespace"
+	}
+	return why
+}
+
 // runGuarded starts cmd, and with r reads the one line its child writes to w; with no r, it writes
 // guardReady to w itself once cmd started. It then passes on the run's signals to cmd and is its exit
-// code. why is set, and nothing waited for, when cmd did not start or its child said why not.
-func runGuarded(cmd *exec.Cmd, r, w *os.File) (code int, why string, err error) {
+// code. why is set, and nothing waited for, when cmd did not start or its child said why not; uid is the
+// caller's, which the namespace's root is not.
+func runGuarded(cmd *exec.Cmd, r, w *os.File, uid int) (code int, why string, err error) {
 	// Pdeathsig follows the thread that started the child, not the process.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -175,7 +202,7 @@ func runGuarded(cmd *exec.Cmd, r, w *os.File) (code int, why string, err error) 
 		_ = w.Close() //nolint:errcheck // the parent's end of the child's pipe, closed once the child holds its own
 	}
 	if err != nil {
-		return 0, "the system refused the namespace: " + err.Error(), nil
+		return 0, namespaceRefused(err, uid, lookup(cmd.Env, containedVar) != ""), nil
 	}
 	if r != nil {
 		line, _ := bufio.NewReader(r).ReadString('\n') //nolint:errcheck // a pipe that ended with no line is the root's end, and line is empty then
@@ -236,30 +263,21 @@ func loopbackUp(name string) error {
 	return nil
 }
 
-// onlyLoopback is whether every network interface this process sees is a loopback one, as in the
-// namespace the guard made, and none is a way out.
-func onlyLoopback() bool {
+// wayOut is "" where every network interface this process sees that is up is a loopback one, as in the
+// namespace the guard made, and otherwise why not, naming the first that is up and not loopback. One
+// that is down carries nothing: a new network namespace holds the tunnel interfaces of the host's
+// modules (tunl0, sit0, ip6tnl0), down.
+func wayOut() string {
 	ifs, err := net.Interfaces()
-	if err != nil || len(ifs) == 0 {
-		return false
+	if err != nil {
+		return "the interfaces of the guard's network namespace could not be listed: " + err.Error()
 	}
-	for _, i := range ifs {
-		if i.Flags&net.FlagLoopback == 0 {
-			return false
+	for _, i := range append(ifs, extraInterfaces...) {
+		if i.Flags&net.FlagUp != 0 && i.Flags&net.FlagLoopback == 0 {
+			return "an interface that is not loopback is up in the guard's network namespace: " + i.Name
 		}
 	}
-	return true
-}
-
-// withoutGuardVar is environ with guardVar left out.
-func withoutGuardVar(environ []string) []string {
-	out := make([]string, 0, len(environ))
-	for _, kv := range environ {
-		if !strings.HasPrefix(kv, guardVar+"=") {
-			out = append(out, kv)
-		}
-	}
-	return out
+	return ""
 }
 
 // withGoResolver is environ with netdns=go after the GODEBUG settings it has, which it keeps, as the last

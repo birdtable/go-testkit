@@ -118,9 +118,11 @@ code, err := testkit.Main(m, testkit.NoNetwork())
 
 A dial to any other address fails with an error that names it, and an `httptest` server works.
 Main sets the guard before any test runs, and proves it: a connect to `192.0.2.1:9` must be refused
-by the guard, and one to a listener on `127.0.0.1` must succeed. On macOS the guard is the system
+by the guard, and one to a listener on `127.0.0.1` must succeed. `NoNetwork` is an option of `Main`
+alone: `Isolate` runs no `Before`, so given one it returns an error and isolates nothing. On macOS the guard is the system
 sandbox, set on the test process with `sandbox_init`. On Linux the test binary reruns in a user and
-network namespace of its own, with only loopback up. The guard is tested on macOS arm64 and Linux
+network namespace of its own, with only loopback up, and every start of the test binary inside it,
+a fuzz worker or a helper child started by `os/exec`, stays inside. The guard is tested on macOS arm64 and Linux
 amd64. On macOS amd64 it is not tested: it is vetted by CI on every pull request, and built by the
 push tier.
 
@@ -131,13 +133,24 @@ stderr saying so, and runs them. The refusals:
 | Refusal | Where | Main's error says | Test |
 |---|---|---|---|
 | A name in `NoNetwork(...)` that is no GOOS | every system | `"macos", which is no GOOS` | `TestNoNetworkRefusesANameThatIsNoGOOS` |
+| `NoNetwork` given to `Isolate`, which runs no `Before` | every system | Isolate's error: `NoNetwork is an option of Main` | `TestIsolateGivenNoNetworkReturnsAnErrorAndChangesNothing` |
 | The system has no guard | Windows, and all but macOS and Linux | `Windows gives an unprivileged process no way to refuse outbound connections and keep loopback` | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
 | The process already runs in a sandbox | macOS (`sandbox-exec`, an agent's sandboxed shell) | `sandbox_init refused the profile`, and that the process already runs inside a sandbox | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
 | The host refuses an unprivileged user namespace | Linux | `the system refused the namespace` | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
+| As uid 0, `contain.Contain` comes before `NoNetwork` in `Main`'s options | Linux | `the system refused the namespace`, and `put NoNetwork before contain.Contain` | `TestAsUID0ARefusedNamespaceSaysToPutNoNetworkFirst`, `TestTheContainMarkerNoNetworkReadsIsContainsOwn` |
+| As uid 0 outside `contain`, the system refuses a new user namespace, as a container's default seccomp profile does | Linux | `the system refused the namespace`, and `a container's seccomp profile` | `TestAsUID0ARefusedNamespaceSaysToPutNoNetworkFirst` |
 | Loopback does not come up in the new namespace | Linux (Ubuntu's `kernel.apparmor_restrict_unprivileged_userns=1`) | `loopback could not be brought up in the new network namespace` | `TestALoopbackThatWillNotComeUpRefusesTheGuard` |
+| An interface that is up and not loopback is in the tests' new namespace | Linux | `an interface that is not loopback is up in the guard's network namespace`, and its name | `TestAnInterfaceUpBesideTheGuardsLoopbackRefusesNamingIt` |
+| The tests cannot read which network namespace they run in | Linux | `the network namespace the tests run in cannot be read`, and the link with its error | `TestAnUnreadableNetworkNamespaceLinkRefusesTheGuard` |
 | The new namespace is the run's own | Linux | `the new network namespace is the one the run started in` | `TestAGuardLeftInTheRunsNetworkNamespaceRefuses` |
 | The probe's connect was made, or failed some other way | every guarded system | `the probe's connection to 192.0.2.1:9 was made`, or `failed, but not with the guard's` | `TestTheProbeFailsAGuardThatHoldsNothing` |
+| Setting the guard failed with an error, whatever its step said of done | every guarded system | the step's error, and Main's code is 1 or more | `TestAGuardStepThatErrsWithDoneFalseEndsTheRun` |
 | The probe cannot reach loopback | every guarded system | `the probe could not reach its listener on loopback` | none: no guard of testkit's closes loopback |
+
+With the `contain` module, put `NoNetwork` first: `testkit.Main(m, testkit.NoNetwork(), contain.Contain())`.
+On Linux the tests run in a nested user namespace with your uid and gid. If you are not uid 0 they
+hold no capability there. As uid 0 they hold every capability of that user namespace and none over
+the network namespace, so the guard still holds.
 
 On Linux the rerun's `GODEBUG` ends with `netdns=go`, after any settings you gave it. So the test
 binary, and a Go program it starts with that environment, look names up with Go's own resolver, which

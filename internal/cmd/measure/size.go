@@ -58,7 +58,35 @@ import (
 // of the repository applies; every git call is given GIT_NO_LAZY_FETCH=1, and a tree a partial clone
 // lacks is refused, saying so, and only a missing object is said so; and the doc says what the tree
 // holds and which git the promise needs.
-const Ceiling = 6128
+//
+// Raised by 9 to 6137, by measure, for Isolate's refusal of NoNetwork: conf's guard flag, which NoNetwork
+// sets, and Isolate's check, its error and its doc (testkit.go, 9); NoNetwork's doc keeps its lines.
+//
+// Raised by 4 to 6141, by measure, for a guard step's error ending the run: noNetwork takes its step as
+// a parameter, ends the run on any error with a code of 1 or more, and its doc says so (nonetwork.go).
+//
+// Raised by 9 to 6150, by measure, for the guard's interface check on Linux: wayOut counts only the
+// interfaces that are up and names the first way out, a run in another namespace that fails it refuses
+// rather than nest again, and extraInterfaces is the add-only seam its tests use (nonetwork_linux.go).
+//
+// Raised by 9 to 6159, by measure, for the guard's marker in the tests' environment: NoNetwork keeps
+// guardVar and isolate puts the guard's own value of it there once the tests checked in, so a fuzz worker
+// or a helper child does not nest (testkit.go, nonetwork.go); guardVar's doc, moved to nonetwork.go to be
+// read on every system, and NoNetwork's say so.
+//
+// Raised by 15 to 6174, by measure, for NoNetwork beside contain as uid 0: NoNetwork's doc says what a
+// uid 0 caller's tests hold and that NoNetwork goes first (4), and namespaceRefused, the refusal's
+// wording, says so to a uid 0 caller refused with no permission (nonetwork_linux.go, 11).
+//
+// Raised by 7 to 6181, by measure, for tests that cannot read their network namespace on Linux: the run
+// refuses, naming the link and its error, rather than nest again, and runNetLink is the seam its test
+// names a link of no namespace by (nonetwork_linux.go).
+//
+// Raised by 12 to 6193, by measure, for the uid 0 refusal's two causes: namespaceRefused says to put
+// NoNetwork first only inside contain's containment, read by containedVar, and names a container's
+// seccomp profile outside it; runGuarded takes the caller's uid, which the namespace's root is not; and
+// the docs say guardedFrom is set before the probe, and a child probes again (nonetwork_linux.go, nonetwork.go).
+const Ceiling = 6193
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
