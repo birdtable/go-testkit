@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -202,7 +203,8 @@ type encodedRow struct {
 }
 
 // encodedRows is a row per encoding: hex in both cases, base64 and URL-safe base64 at each alignment,
-// padded, the query and path escapes with their hex digits in each case, and UTF-16 both ways.
+// padded, the query and path escapes with their hex digits in each case, UTF-16 both ways, and the
+// value's bytes in decimal as fmt's %v prints a []byte, the needle starting after its "[".
 func encodedRows(t *testing.T) []encodedRow {
 	t.Helper()
 	v := []byte(encodedValue)
@@ -240,7 +242,10 @@ func encodedRows(t *testing.T) []encodedRow {
 		le = binary.LittleEndian.AppendUint16(le, u)
 		be = binary.BigEndian.AppendUint16(be, u)
 	}
-	return append(rows, encodedRow{"UTF-16 LE", UTF16LE, string(le), 0}, encodedRow{"UTF-16 BE", UTF16BE, string(be), 0})
+	return append(rows,
+		encodedRow{"UTF-16 LE", UTF16LE, string(le), 0},
+		encodedRow{"UTF-16 BE", UTF16BE, string(be), 0},
+		encodedRow{"decimal, as fmt's %v prints a []byte", Decimal, fmt.Sprintf("%v", v), len("[")})
 }
 
 // lead is what the encoding rows write before an encoded value, so its offset is not 0.
@@ -248,11 +253,11 @@ const lead = "log: "
 
 // TestEachEncodingOfAPlantedValueIsFoundAndNamed: a planted value written as itself, as hex in either
 // case, as base64 or URL-safe base64 padded after 0, 1 or 2 other bytes, as a URL's query or path
-// escape with its hex digits in either case, or as UTF-16 either way, is one hit, naming the
-// encoding and the offset where the value's own bytes start.
+// escape with its hex digits in either case, as UTF-16 either way, or as fmt's %v of its bytes, is
+// one hit, naming the encoding and the offset where the value's own bytes start.
 //
 // What it costs when this fails: a program that writes a token base64'd in a header, escaped in a
-// URL or as UTF-16 passes its test.
+// URL, as UTF-16 or as a []byte printed with %v passes its test.
 func TestEachEncodingOfAPlantedValueIsFoundAndNamed(t *testing.T) {
 	t.Parallel()
 	for _, row := range encodedRows(t) {
@@ -461,6 +466,39 @@ func TestValueReadsAnErrorAStringerAndEveryField(t *testing.T) {
 	sameHits(t, "a Stringer", s.Value("who", shown{v}), []Hit{hit("who (String)", len("signed in as ")), hit("who (%+v)", len("signed in as "))})
 	sameHits(t, "a field only %+v shows", s.Value("cfg", settings{User: "ann", token: v}), []Hit{hit("cfg (%+v)", len("{User:ann token:"))})
 	sameHits(t, "a value with none", s.Value("cfg", settings{User: "ann"}), nil)
+}
+
+// TestAKeyHeldAsBytesIsFoundAsFmtPrintsIt: a value New plants, held as a []byte in a struct field,
+// as the []byte alone, or as a [40]byte field, is one hit from Value named decimal, at the offset of
+// its first byte in fmt's %+v; and a log line made by log's Printf with %v of the []byte is one hit
+// from Bytes, named the same.
+//
+// What it costs when this fails: a program that returns a config holding its key as a []byte, or
+// logs the key with %v, passes its test, as fmt prints those bytes as a list of numbers.
+func TestAKeyHeldAsBytesIsFoundAsFmtPrintsIt(t *testing.T) {
+	t.Parallel()
+	rec := newRecorder(t)
+	var s *Set
+	if rec.do(func() { s = New(rec, "token") }) {
+		t.Fatalf("planting: %s", rec.said())
+	}
+	key := []byte(s.Get("token"))
+	var fixed [40]byte
+	if copy(fixed[:], key) != len(key) || len(key) != len(fixed) {
+		t.Fatalf("a value New plants is %d bytes, want %d", len(key), len(fixed))
+	}
+	hit := func(check, place string, at int) Hit {
+		return Hit{Name: "token", Check: check, Place: place, Offset: int64(at), Encoding: Decimal, Count: 1}
+	}
+	sameHits(t, "a []byte field", s.Value("cfg", struct {
+		User string
+		Key  []byte
+	}{"ann", key}), []Hit{hit(CheckValue, "cfg (%+v)", len("{User:ann Key:["))})
+	sameHits(t, "a []byte", s.Value("key", key), []Hit{hit(CheckValue, "key (%+v)", len("["))})
+	sameHits(t, "a [40]byte field", s.Value("cfg", struct{ Key [40]byte }{fixed}), []Hit{hit(CheckValue, "cfg (%+v)", len("{Key:["))})
+	var line bytes.Buffer
+	log.New(&line, "auth: ", 0).Printf("signing with %v", key)
+	sameHits(t, "a log line", s.Bytes("log", line.Bytes()), []Hit{hit(CheckBytes, "log", len("auth: signing with ["))})
 }
 
 // TestFilesFailsOnWhatItCannotRead: a file Files cannot open fails the test naming the file, with
