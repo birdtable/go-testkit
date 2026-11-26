@@ -52,11 +52,12 @@ import (
 // withGoResolver appends netdns=go to the rerun's GODEBUG, keeping the caller's settings (17), and
 // nonetwork.go's doc says so and narrows the limit to programs that are not Go (2).
 //
-// Raised by 346 to 6338, by measure, for RequireMain, the check that every package's TestMain calls
-// Main: requiremain.go is 344, go list -e -json for darwin, linux and windows, the TestMain and its
-// call read with go/parser, the opt-out line, the file and build line that leave a TestMain out, go's
-// errors with the import they name, and its doc; and doc.go's two lines name it (2).
-const Ceiling = 6338
+// Raised by 365 to 6357, by measure, for RequireMain, the check that every package's TestMain calls
+// Main: requiremain.go is 363, go list -e -json for darwin, linux and windows with GOARCH=amd64 and cgo
+// off, the TestMain and its call read with go/parser, the opt-out line, the file and build line that
+// leave a TestMain out, a package a pattern names that a system builds nothing of passed, go's errors
+// with the import they name, and its doc; and doc.go's two lines name it (2).
+const Ceiling = 6357
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

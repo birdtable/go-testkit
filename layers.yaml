@@ -13,7 +13,7 @@ packages:
     role: leaf
     job: testkit's own list of the home, temp and XDG_ names, kept equal to go-proc's
     may: []
-    tests-may: []
+    tests-may: [.]
   - path: fake
     role: leaf
     job: a built stand-in program that does a list of steps, for a test that would plant a script

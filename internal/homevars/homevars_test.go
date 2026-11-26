@@ -1,7 +1,5 @@
 package homevars
 
-//testkit:unisolated the root package imports homevars, so its tests cannot import testkit without a cycle; they read lists of names and start nothing
-
 import (
 	"path/filepath"
 	"slices"

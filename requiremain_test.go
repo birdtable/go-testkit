@@ -7,8 +7,8 @@ import (
 )
 
 // TestEveryPackageOfTheModuleCallsMain: every package of testkit's root module that has tests calls
-// Main from its TestMain on darwin, linux and windows, and internal/homevars, which the root package
-// imports, opts out with its reason, logged.
+// Main from its TestMain on darwin, linux and windows, and none opts out: internal/homevars, which the
+// root package imports, calls it from its external test package.
 //
 // What it costs when this fails: a package of testkit's own runs its tests in the person's
 // environment, with their home, their git settings and their tokens.
@@ -21,17 +21,18 @@ func TestEveryPackageOfTheModuleCallsMain(t *testing.T) {
 	if r.failed != "" || r.skipped != "" {
 		t.Errorf("RequireMain of testkit's module failed with %q and skipped %q, want neither", r.failed, r.skipped)
 	}
-	if want := "testkit: RequireMain: " + mainPath + "/internal/homevars is unisolated on darwin, linux, windows: the root package imports homevars"; !strings.Contains(r.logged, want) {
-		t.Errorf("RequireMain logged %q, want it to hold %q", r.logged, want)
+	if strings.Contains(r.logged, "unisolated") {
+		t.Errorf("RequireMain logged %q, want no package of testkit's module to opt out", r.logged)
 	}
 }
 
 // requireTree is a module of a package for each thing RequireMain finds: a TestMain that calls Main
 // under the import's own name, under an alias in the external test package, and under a dot import;
 // none; one that calls Main through a wrapper; one that calls the Main of another package imported as
-// testkit; one only behind a build tag, and one only in a _linux_test.go file; an opt-out, one with no
-// reason, and one only in a _linux_test.go file; and packages with no tests, one of them built only on
-// windows. None of it is built: go list and the parser read it.
+// testkit; one only behind a build tag, one only in a _linux_test.go file, and one only in an
+// _amd64_test.go file; one whose call to Main never runs; a package built only on linux; an opt-out,
+// one with no reason, and one only in a _linux_test.go file; and packages with no tests, one of them
+// built only on windows. None of it is built: go list and the parser read it.
 func requireTree() map[string]string {
 	const imp = "\"github.com/birdtable/go-testkit\""
 	main := func(pkg, imports, call string) string {
@@ -58,6 +59,11 @@ func requireTree() map[string]string {
 		"linuxonly/linuxonly.go":       "package linuxonly\n",
 		"linuxonly/main_linux_test.go": main("linuxonly", imp, "testkit.Main"),
 		"linuxonly/x_test.go":          test("linuxonly", ""),
+		"amdonly/main_amd64_test.go":   main("amdonly", imp, "testkit.Main"),
+		"amdonly/x_test.go":            test("amdonly", ""),
+		"neverruns/neverruns_test.go":  "package neverruns\n\nimport (\n\t\"os\"\n\t\"testing\"\n\n\t" + imp + "\n)\n\nfunc TestMain(m *testing.M) {\n\tos.Exit(m.Run())\n\t_, _ = testkit.Main(m)\n}\n",
+		"lin/lin_linux.go":             "package lin\n",
+		"lin/lin_linux_test.go":        main("lin", imp, "testkit.Main"),
 		"optout/optout_test.go":        test("optout", "//testkit:unisolated it reads only strings\n\n"),
 		"emptyopt/emptyopt_test.go":    test("emptyopt", "//testkit:unisolated\n\n"),
 		"optlinux/x_test.go":           test("optlinux", ""),
@@ -73,7 +79,9 @@ func requireTree() map[string]string {
 // build tag leaves out, naming the file and its line, one whose only TestMain is in a _linux_test.go
 // file, on darwin and windows alone, naming the file, and an opt-out with no reason. It passes a
 // TestMain that calls Main by the import's own name, an alias in an external test package and a dot
-// import, an opt-out, which it logs, and a package with no tests on a system, and patterns narrow it.
+// import, one in an _amd64_test.go file on any host, one whose call never runs, an opt-out, which it
+// logs, and a package with no tests on a system, and patterns narrow it, one naming a package built
+// only on linux.
 // The planted red of each failing row is its package passing; of each passing row, its package named.
 //
 // What it costs when this fails: a package whose TestMain is missing, left out on a system or a
@@ -109,7 +117,7 @@ func TestRequireMainFailsEachPackageWhoseTestMainIsMissingOrDoesNotCallMain(t *t
 	if n := strings.Count(r.failed, "testkit: RequireMain: "); n != len(want) {
 		t.Errorf("RequireMain failed %d times, want %d:\n%s", n, len(want), r.failed)
 	}
-	for _, pkg := range []string{"good", "alias", "dot", "optout", "fakekit", "notests", "winonly"} {
+	for _, pkg := range []string{"good", "alias", "dot", "amdonly", "neverruns", "lin", "optout", "fakekit", "notests", "winonly"} {
 		if strings.Contains(r.failed, "example.invalid/m/"+pkg+" ") {
 			t.Errorf("RequireMain failed example.invalid/m/%s, which calls Main, opts out or has no tests there:\n%s", pkg, r.failed)
 		}
@@ -124,10 +132,10 @@ func TestRequireMainFailsEachPackageWhoseTestMainIsMissingOrDoesNotCallMain(t *t
 	}
 	narrowed := record(t, func(tb testing.TB) {
 		tb.Helper()
-		RequireMain(tb, "./good", "./alias/...", "./optout")
+		RequireMain(tb, "./good", "./alias/...", "./optout", "./lin")
 	})
 	if narrowed.failed != "" || narrowed.skipped != "" || !strings.Contains(narrowed.logged, "example.invalid/m/optout is unisolated") {
-		t.Errorf("RequireMain of ./good, ./alias/... and ./optout failed with %q, skipped %q and logged %q, want only optout's opt-out logged", narrowed.failed, narrowed.skipped, narrowed.logged)
+		t.Errorf("RequireMain of ./good, ./alias/..., ./optout and ./lin failed with %q, skipped %q and logged %q, want only optout's opt-out logged", narrowed.failed, narrowed.skipped, narrowed.logged)
 	}
 }
 

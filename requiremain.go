@@ -43,16 +43,21 @@ func mainSystems() []string {
 //	}
 //
 // patterns are go list's, read in the module's root folder; with none it is ./..., every package of
-// the module. It lists them with go list -e -json once for each of darwin, linux and windows, by GOOS,
-// which builds nothing, in the clean environment and with GOWORK=off, so the module's own go.mod
-// decides what it reads. Under GoOffline go list reads only the module cache, and a module the cache
-// lacks fails t with go's error, at the import that needs it, which the failure names.
+// the module. It lists them with go list -e -json once for each of darwin, linux and windows, by GOOS
+// with GOARCH=amd64 whatever the host's and cgo off, so a file named for one architecture, or built
+// only with cgo, is read alike on every host, and builds nothing, in the clean environment and with GOWORK=off, so the module's own go.mod
+// decides what it reads. A package a pattern names that a system builds no file of is nothing to
+// check on that system, as ./... leaves it out. Under GoOffline go list reads only the module cache,
+// and a module the cache lacks fails t with go's error, at the import that needs it, which the
+// failure names.
 //
 // A package that has test files for a system needs, among those files, in its own test package or its
 // external one, a TestMain whose body calls this package's Main directly, under any name its file
 // imports it by, or unqualified in this package's own tests or under a dot import. The check reads the
 // call and does not follow it: a TestMain that calls a function of the package's own that calls Main
-// does not count, and neither does a Main of another package imported under the name testkit.
+// does not count, and neither does a Main of another package imported under the name testkit. Nor does
+// it read whether the call runs: a call anywhere in the body counts, one after os.Exit or in a func
+// literal never called among them.
 //
 // Each failure names the package, the systems and the reason: it has no TestMain; its TestMain does
 // not call Main; or its only TestMain is in a file that system leaves out, which the failure names
@@ -148,10 +153,10 @@ func goErr(root string, e *listErr) string {
 }
 
 // listFor is what go list -e -json prints for patterns, run in the folder root for the system goos,
-// in the clean environment with GOWORK=off.
+// with GOARCH=amd64 and cgo off, in the clean environment with GOWORK=off.
 func listFor(ctx context.Context, root, goos string, patterns []string) ([]listedPkg, error) {
 	cmd := exec.CommandContext(ctx, "go", append([]string{"list", "-e", "-json"}, patterns...)...) //nolint:gosec // G204: go, with the caller's patterns, none of which starts with -
-	cmd.Dir, cmd.Env = root, append(Clean(os.Environ()), "GOOS="+goos, "GOWORK=off")
+	cmd.Dir, cmd.Env = root, append(Clean(os.Environ()), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0", "GOWORK=off")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -176,15 +181,29 @@ type verdict struct {
 	optOut bool
 }
 
-// checkMain is what RequireMain finds of the package p, as go list run in root listed it for one
-// system: nothing where its TestMain calls Main or it has no tests, else each failure, or its opt-out.
-func checkMain(root string, p listedPkg) []verdict {
+// noFiles begins go list's error for a package a pattern names that the system builds no file of,
+// which ./... leaves out.
+const noFiles = "build constraints exclude all Go files in "
+
+// listErrs is a failure for each of go's errors in listing the package p, run in root, and none for
+// a package the system builds no file of.
+func listErrs(root string, p listedPkg) []verdict {
+	if p.Error != nil && strings.HasPrefix(p.Error.Err, noFiles) {
+		return nil
+	}
 	var out []verdict
 	for _, e := range append([]*listErr{p.Error}, p.DepsErrors...) {
 		if e != nil {
 			out = append(out, verdict{text: goErr(root, e)})
 		}
 	}
+	return out
+}
+
+// checkMain is what RequireMain finds of the package p, as go list run in root listed it for one
+// system: nothing where its TestMain calls Main or it has no tests, else each failure, or its opt-out.
+func checkMain(root string, p listedPkg) []verdict {
+	out := listErrs(root, p)
 	built := append(slices.Clone(p.TestGoFiles), p.XTestGoFiles...)
 	if len(out) != 0 || len(built) == 0 {
 		return out
