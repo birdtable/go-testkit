@@ -37,7 +37,8 @@ import (
 // GoOffline a module the old tree needs that the module cache lacks fails the build, and go's output
 // names it. git runs in the clean environment too, so it reads git's configuration as Isolate set it.
 //
-// BuildAt fails t, and never skips it: where no Isolate is in force; where ref starts with -, which
+// BuildAt fails t, and never skips it: where opts hold an option only Main acts on, as Build refuses
+// one, naming it; where no Isolate is in force; where ref starts with -, which
 // git would read as an option, or names no commit; where pkg starts with -, which go build would read
 // as a flag, is absolute, which names a folder of today's tree, or names a folder outside the
 // repository; and where the test's folder has no go.mod above it or is in no git repository. Each
@@ -45,6 +46,9 @@ import (
 // go's output on Stderr.
 func BuildAt(t testing.TB, ref, pkg string, opts ...Option) *Binary {
 	t.Helper()
+	if err := mainOnly("BuildAt", opts); err != nil {
+		t.Fatalf("testkit: BuildAt of %q at %q: %v", pkg, ref, err)
+	}
 	if inForce().set == nil {
 		t.Fatalf("testkit: BuildAt of %q at %q: no Isolate is in force, and git would read the person's configuration", pkg, ref)
 	}
