@@ -139,6 +139,7 @@ stderr saying so, and runs them. The refusals:
 | Loopback does not come up in the new namespace | Linux (Ubuntu's `kernel.apparmor_restrict_unprivileged_userns=1`) | `loopback could not be brought up in the new network namespace` | `TestALoopbackThatWillNotComeUpRefusesTheGuard` |
 | The new namespace is the run's own | Linux | `the new network namespace is the one the run started in` | `TestAGuardLeftInTheRunsNetworkNamespaceRefuses` |
 | The probe's connect was made, or failed some other way | every guarded system | `the probe's connection to 192.0.2.1:9 was made`, or `failed, but not with the guard's` | `TestTheProbeFailsAGuardThatHoldsNothing` |
+| Setting the guard failed with an error, whatever its step said of done | every guarded system | the step's error, and Main's code is 1 or more | `TestAGuardStepThatErrsWithDoneFalseEndsTheRun` |
 | The probe cannot reach loopback | every guarded system | `the probe could not reach its listener on loopback` | none: no guard of testkit's closes loopback |
 
 On Linux the rerun's `GODEBUG` ends with `netdns=go`, after any settings you gave it. So the test

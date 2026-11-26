@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -241,7 +242,7 @@ func TestNoNetworkNamingTheSystemRunsTheTestsUnguardedAndSaysSo(t *testing.T) {
 // Planted failure: a name taken unchecked lets "macos" through. Risk: none.
 func TestNoNetworkRefusesANameThatIsNoGOOS(t *testing.T) {
 	t.Parallel()
-	code, done, err := noNetwork(nil, []string{"linux", "macos"})
+	code, done, err := noNetwork(nil, []string{"linux", "macos"}, guardHere)
 	if !done || code != 1 || err == nil || !strings.Contains(err.Error(), `"macos", which is no GOOS`) {
 		t.Fatalf("NoNetwork(\"linux\", \"macos\") gave %d, %v, %v; want the run refused, naming macos", code, done, err)
 	}
@@ -278,5 +279,23 @@ func TestIsolateGivenNoNetworkReturnsAnErrorAndChangesNothing(t *testing.T) {
 	}
 	if got := os.Getenv("HOME"); got != home {
 		t.Errorf("a refused Isolate moved HOME from %q to %q", home, got)
+	}
+}
+
+// Planted failure: a Before that passes on done as the guard's step said lets Main run the tests past an
+// error with done false, unguarded, even where the caller named no system. Risk: none; the step is the
+// test's own, and no guard is set.
+func TestAGuardStepThatErrsWithDoneFalseEndsTheRun(t *testing.T) {
+	t.Parallel()
+	stepErr := errors.New("the step failed before it set the guard")
+	for _, tc := range []struct {
+		code, want int
+		unguarded  []string
+	}{{0, 1, nil}, {0, 1, []string{hostOS()}}, {5, 5, nil}} {
+		step := func([]string) (int, bool, string, error) { return tc.code, false, "", stepErr }
+		code, done, err := noNetwork(nil, tc.unguarded, step)
+		if !done || code != tc.want || !errors.Is(err, stepErr) {
+			t.Errorf("a step that ended %d with done false and an error gave %d, %v, %v; want %d, done and its error (unguarded %v)", tc.code, code, done, err, tc.want, tc.unguarded)
+		}
 	}
 }

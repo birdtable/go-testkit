@@ -54,7 +54,10 @@ import (
 //
 // Raised by 9 to 6001, by measure, for Isolate's refusal of NoNetwork: conf's guard flag, which NoNetwork
 // sets, and Isolate's check, its error and its doc (testkit.go, 9); NoNetwork's doc keeps its lines.
-const Ceiling = 6001
+//
+// Raised by 4 to 6005, by measure, for a guard step's error ending the run: noNetwork takes its step as
+// a parameter, ends the run on any error with a code of 1 or more, and its doc says so (nonetwork.go).
+const Ceiling = 6005
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

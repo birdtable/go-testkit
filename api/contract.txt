@@ -3,6 +3,7 @@
 .	TestAFileOrAFolderLeftOpenUnderTheFolderIsReportedUntilItIsClosed	linux,darwin	NoOpenFiles reports each file and folder still open under its folder when the test ends, by its path and descriptor, until it is closed.
 .	TestAGoUnderGoOfflineFetchesNothingAndBuildsFromTheCache	all	A go command a test starts under GoOffline fetches no module and no toolchain, with GOPRIVATE kept too, and builds from the module cache.
 .	TestAGuardLeftInTheRunsNetworkNamespaceRefuses	linux	On Linux a NoNetwork whose new namespace is the run's own network namespace fails Main, and no test runs.
+.	TestAGuardStepThatErrsWithDoneFalseEndsTheRun	all	A NoNetwork guard step that returns an error with done false ends Main with that error and a code of 1 or more, and no test runs, even where the caller named the system.
 .	TestALoopbackThatWillNotComeUpRefusesTheGuard	linux	On Linux a NoNetwork whose new namespace cannot bring loopback up fails Main, naming the interface, and no test runs.
 .	TestAReadyLineThatFailsIsInterruptedsErrorAndLeavesNoHandler	all	An Interrupted whose ready line cannot be written returns that error, the context it was given and a stop that does nothing, and leaves no handler: the interrupt then ends the child the system's way.
 .	TestARefusedProbeSkipsWithTheOneMessageAndPlantsNothing	all	Where the system refuses a link, Link and Links skip with NoLinks, plant nothing and fail nothing.

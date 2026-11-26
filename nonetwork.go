@@ -56,7 +56,7 @@ import (
 func NoNetwork(unguardedOn ...string) Option {
 	unguarded := slices.Clone(unguardedOn)
 	return Options(
-		Before(func(start []string) (int, bool, error) { return noNetwork(start, unguarded) }),
+		Before(func(start []string) (int, bool, error) { return noNetwork(start, unguarded, guardHere) }),
 		RerunEnv(guardRerunEnv),
 		func(c *conf) { c.guard = true },
 	)
@@ -70,17 +70,21 @@ func hostOS() string {
 	return runtime.GOOS //nolint:forbidigo // arch.ports.1: the API names a system by GOOS, so the name is matched, not branched on
 }
 
-// noNetwork is NoNetwork's Before: it sets the guard on this system and probes it, or, where it cannot,
-// fails the run, unless unguarded names this system.
-func noNetwork(start, unguarded []string) (int, bool, error) {
+// noNetwork is NoNetwork's Before: it sets the guard on this system by step, which is guardHere, and
+// probes it, or, where it cannot, fails the run, unless unguarded names this system. An error of step
+// ends the run whatever its done says, with 1 where its code is 0, so no test runs unguarded past it.
+func noNetwork(start, unguarded []string, step func([]string) (int, bool, string, error)) (int, bool, error) {
 	for _, name := range unguarded {
 		if !slices.Contains(knownOS, name) {
 			return 1, true, fmt.Errorf("NoNetwork was given %q, which is no GOOS, so no test ran: name each system as GOOS does (%s)", name, strings.Join(knownOS, ", "))
 		}
 	}
-	code, done, why, err := guardHere(start)
+	code, done, why, err := step(start)
+	if err != nil && code == 0 {
+		code = 1
+	}
 	if done || err != nil {
-		return code, done, err
+		return code, true, err
 	}
 	if why == "" {
 		if why = probe(probeTarget, probeRefusal); why == "" {
