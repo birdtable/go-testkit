@@ -115,9 +115,10 @@ import (
 // apart, the chunked read that keeps a tail so a value across two chunks is found, the four checks
 // and their report, the open that does not wait on a FIFO swapped in after the walk, the search of
 // each path below the folder, the redaction that shows a value in a place, a path or an error as its
-// name, the refusal of a check on a Set with nothing planted, and the package doc's limits. The read
-// for removable code took out 25 lines: unreachable error branches, a helper the standard
-// library has, a guard that guarded nothing and the two one-system open files.
+// name, the refusal of a check on a Set with nothing planted, and the package doc's limits. From 559,
+// the read for removable code took out 35 lines (unreachable error branches, a helper the standard
+// library has, a guard that guarded nothing and the two one-system open files), and the one hit for
+// UTF-16's two byte orders added 10.
 const Ceiling = 7219
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
