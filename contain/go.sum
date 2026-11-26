@@ -1,5 +1,5 @@
-github.com/birdtable/go-testkit v0.3.1 h1:ochpuiBPj29SIwpVeYqNWOfkxef0nlWREzKcgM3N6DU=
-github.com/birdtable/go-testkit v0.3.1/go.mod h1:4NZgsg8gJU/2MwyYv8MyJO9sh2j+rjGyPmcYfVS0Lz8=
+github.com/birdtable/go-testkit v0.4.1-0.20261126014529-ebf77cb0e26a h1:xky7dPm2TmdOqK/FdViWRgfubvDTC6JCP1Kiqy2iWwU=
+github.com/birdtable/go-testkit v0.4.1-0.20261126014529-ebf77cb0e26a/go.mod h1:4NZgsg8gJU/2MwyYv8MyJO9sh2j+rjGyPmcYfVS0Lz8=
 kernel.org/pub/linux/libs/security/libcap/cap v1.2.78 h1:jgqg4gyu2BaYW9L6uzEtGLf8GNREwk/z4UFdwt5F3pE=
 kernel.org/pub/linux/libs/security/libcap/cap v1.2.78/go.mod h1:VjuVda6m2qGkpCVfrFkpTGyvkdlZ2N5/yfo89tujlg8=
 kernel.org/pub/linux/libs/security/libcap/psx v1.2.78 h1:PC3yNs51cX5LZ7U57a7xielBcoXB3xnV+rXD8V0H0DQ=

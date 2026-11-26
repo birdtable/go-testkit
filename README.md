@@ -97,7 +97,8 @@ two modules require what they are built on:
 - [`kernel.org/pub/linux/libs/security/libcap/cap`](https://pkg.go.dev/kernel.org/pub/linux/libs/security/libcap/cap),
   in `contain`: the capability calls on Linux.
 - [`github.com/birdtable/go-testkit`](https://pkg.go.dev/github.com/birdtable/go-testkit), in `contain`:
-  the `Main` that `contain` is given to.
+  the `Main` that `contain` is given to; and in both, the `Main` and `RequireMain` their own tests run
+  under.
 - [`go.yaml.in/yaml/v3`](https://pkg.go.dev/go.yaml.in/yaml/v3), in `taskfile`: reads Taskfile.yml.
 - [`mvdan.cc/sh/v3`](https://pkg.go.dev/mvdan.cc/sh/v3), in `taskfile`: parses each command's shell,
   as go-task's interpreter does.

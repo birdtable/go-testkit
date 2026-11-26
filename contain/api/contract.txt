@@ -1,4 +1,5 @@
 .	TestAContainedRunIsInAJobAndItsTreeEndsWhenTheJobCloses	windows	In a contained run the tests are in a Job Object that ends their whole tree when it closes.
 .	TestAContainedRunIsInitsChildAndInitReapsWhatItOrphans	linux	In a contained run the tests are a child of the namespace's PID 1, which reaps every process they orphan.
 .	TestContainedSkipsWithTheReasonItWasNotContainedFor	all	Contained skips a test with the run's own reason where the run is not contained (NotAsked, NoContainment, or Refused and the system's words), and skips nothing in a contained run.
+.	TestEveryPackageOfTheModuleCallsMain	all	Every package of the module contain that has tests calls testkit's Main from its TestMain on darwin, linux and windows, by RequireMain, and none opts out.
 .	TestTheTestsInAContainedRunHoldNoCapability	linux	The tests of a contained run hold no capability of the namespace in any set, as uid 0 too.
