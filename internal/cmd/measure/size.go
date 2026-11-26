@@ -103,7 +103,12 @@ import (
 // off, the TestMain and its call read with go/parser, the opt-out line, the file and build line that
 // leave a TestMain out, a package a pattern names that a system builds nothing of passed, go's errors
 // with the import they name, and its doc; and doc.go's two lines name it (2).
-const Ceiling = 6604
+//
+// Raised by 81 to 6685, by measure, for cmd/apigate's -before-head (main.go, 81): check 2's base
+// from the head's parents, each read by git describe and the nearest to the head taken by git
+// rev-list's count, so a gate run at its own tag holds the breaks since the tag before, with a line
+// for each way git fails there, and the docs of the flag and of check 2.
+const Ceiling = 6685
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
