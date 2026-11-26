@@ -2,12 +2,15 @@ package canary
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
+	"math"
+	"math/big"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -434,6 +437,108 @@ func TestNoLineACheckGivesHoldsTheValueOrAnyOfItsEncodings(t *testing.T) {
 	}
 }
 
+// TestNoLineHoldsARunOfAValueThatIsNoWholeNeedle: a place where one value runs on into another, the
+// first ending as the second starts, is shown as <a><b>, and a file named with the first 24 bytes of
+// a value it holds as <token>.log, so no line holds 16 bytes in a row of either value or of any
+// encoding of one, though no whole needle is there to replace.
+//
+// What it costs when this fails: a test log holds most of a planted value, as no whole needle
+// matched what the line shows of it.
+func TestNoLineHoldsARunOfAValueThatIsNoWholeNeedle(t *testing.T) {
+	t.Parallel()
+	const a, b = "alpha-0123456789-9876543210", "-9876543210-omega-zyxwvutsrq"
+	rec := newRecorder(t)
+	var s *Set
+	if rec.do(func() { s = New(rec, "token"); s.Own("a", a); s.Own("b", b) }) {
+		t.Fatalf("planting: %s", rec.said())
+	}
+	both := a + strings.TrimPrefix(b, "-9876543210")
+	if hits := s.Bytes(both, []byte(both)); len(hits) != 2 {
+		t.Fatalf("Bytes of the two values run together: %d hits, want 2", len(hits))
+	}
+	v := s.Get("token")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, v[:24]+".log"), []byte(v), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if hits := s.Files(dir); len(hits) != 1 {
+		t.Fatalf("Files of a file named with 24 bytes of the token: %d hits, want 1", len(hits))
+	}
+	said := rec.said()
+	for _, want := range []string{
+		`canary: the planted "a" is in "<a><b>" (Bytes) at byte 0, as raw, once`,
+		`canary: the planted "b" is in "<a><b>" (Bytes) at byte 16, as raw, once`,
+		`canary: the planted "token" is in "<token>.log" (Files) at byte 0, as raw, once`,
+	} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the checks said %q, want %q", said, want)
+		}
+	}
+	for _, nd := range s.needles {
+		for i := 0; i+16 <= len(nd.b); i++ {
+			if w := nd.b[i : i+16]; strings.Contains(said, string(w)) {
+				t.Errorf("the lines hold %q, 16 bytes of %q as %s:\n%s", w, nd.name, nd.encoding, said)
+				break
+			}
+		}
+	}
+}
+
+// TestTheQuarterRuleRefusesARandomHexKeyAsOftenAsOwnsDocSays: of 100,000 keys of 16 random bytes
+// written as 32 hex characters, the rules Own applies (plain) refuse within four standard deviations
+// of the count the exact chance of one digit being over a quarter predicts, and that chance is the
+// one in 574 Own's doc gives. Key i is the first 16 bytes of the SHA-256 of i, so the count is the
+// same each run.
+//
+// What it costs when this fails: Own's doc tells a consumer the wrong rate at which a key drawn at
+// random each run stops its test.
+func TestTheQuarterRuleRefusesARandomHexKeyAsOftenAsOwnsDocSays(t *testing.T) {
+	t.Parallel()
+	const keys, digits = 100_000, 32
+	refused := 0
+	for i := range keys {
+		key := sha256.Sum256(binary.BigEndian.AppendUint32(nil, uint32(i)))
+		if plain(hex.EncodeToString(key[:digits/2])) != "" {
+			refused++
+		}
+	}
+	p := overAQuarter(digits, 16)
+	if in := math.Round(1 / p); in != 574 {
+		t.Errorf("one digit is over a quarter of %d random hex characters once in %v draws; Own's doc says 574", digits, in)
+	}
+	want, sd := keys*p, math.Sqrt(keys*p*(1-p))
+	if math.Abs(float64(refused)-want) > 4*sd {
+		t.Errorf("plain refused %d of %d random hex keys, want %.1f within %.1f", refused, keys, want, 4*sd)
+	}
+}
+
+// overAQuarter is the chance that one symbol is over a quarter of n drawn at random from size
+// symbols: one less the share of the size^n strings in which each symbol is n/4 or fewer, counted by
+// adding one symbol at a time, each with every count it may have, placed among those before it.
+func overAQuarter(n, size int) float64 {
+	ways := make([]*big.Int, n+1) // strings of the symbols so far, by length
+	for i := range ways {
+		ways[i] = new(big.Int)
+	}
+	ways[0].SetInt64(1)
+	for range size {
+		next := make([]*big.Int, n+1)
+		for i := range next {
+			next[i] = new(big.Int)
+		}
+		for m := range n + 1 {
+			for c := 0; c <= n/4 && m+c <= n; c++ {
+				w := new(big.Int).Binomial(int64(m+c), int64(c))
+				next[m+c].Add(next[m+c], w.Mul(w, ways[m]))
+			}
+		}
+		ways = next
+	}
+	all := new(big.Int).Exp(big.NewInt(int64(size)), big.NewInt(int64(n)), nil)
+	p, _ := new(big.Rat).SetFrac(new(big.Int).Sub(all, ways[n]), all).Float64()
+	return p
+}
+
 // shown is a value whose String holds a planted value.
 type shown struct{ v string }
 
@@ -598,6 +703,38 @@ func TestFilesFollowsNoLink(t *testing.T) {
 	}
 	if said := rec.said(); said != "" {
 		t.Errorf("Files of a folder with links outside said %q, want nothing", said)
+	}
+}
+
+// TestFilesFindsAValueInALinksTargetAndOpensNothingItNames: a link whose target's text holds a planted
+// value, raw or as hex after a folder's name, is a hit in the place "<link> (target)" at the offset in
+// that text, though nothing is at the target; a link whose text holds none is no hit, and Files says
+// nothing more.
+//
+// What it costs when this fails: a program that points a link at a token, as a release or a session
+// is often named, passes its test.
+func TestFilesFindsAValueInALinksTargetAndOpensNothingItNames(t *testing.T) {
+	t.Parallel()
+	rec := newRecorder(t)
+	var s *Set
+	if rec.do(func() { s = New(rec, "token") }) {
+		t.Fatalf("planting: %s", rec.said())
+	}
+	v := s.Get("token")
+	dir := t.TempDir()
+	testkit.Link(t, v, filepath.Join(dir, "current"))
+	testkit.Link(t, "releases/"+hex.EncodeToString([]byte(v)), filepath.Join(dir, "previous"))
+	testkit.Link(t, "releases/1", filepath.Join(dir, "stable"))
+	hit := func(place string, at int, encoding string) Hit {
+		return Hit{Name: "token", Check: CheckFiles, Place: place, Offset: int64(at), Encoding: encoding, Count: 1}
+	}
+	sameHits(t, "a folder of links", s.Files(dir), []Hit{hit("current (target)", 0, Raw), hit("previous (target)", len("releases/"), Hex)})
+	said := rec.said()
+	if want := `canary: the planted "token" is in "current (target)" (Files) at byte 0, as raw, once`; !strings.Contains(said, want) {
+		t.Errorf("Files said %q, want %q", said, want)
+	}
+	if n := strings.Count(said, "canary:"); n != 2 {
+		t.Errorf("Files gave %d lines, want 2, one a hit: %q", n, said)
 	}
 }
 

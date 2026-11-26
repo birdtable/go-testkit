@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'canary: a line a check gives holds no run of 16 bytes or more of a planted value or of any of its encodings, where before only whole values and encodings were replaced by the value''s name. A place where one value runs on into another, the first ending as the second starts, is now shown as <a><b>, where 17 bytes of the second stayed in the line; and a file whose name starts with 24 bytes of a value is shown with those bytes as <name>.'
+time: 2026-11-26T11:18:00.000000+01:00

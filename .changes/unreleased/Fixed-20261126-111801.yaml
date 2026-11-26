@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'canary: Files reads the target of each symbolic link under the folder as text, the place "<path> (target)", so a program that points a link at a planted value, as with os.Symlink(token, "current"), is caught. It still follows no link: it reads the link, not what the target names. Own''s doc says a value drawn at random each run can fall to its quarter rule, one digit over a quarter of 32 random hex characters in about one draw in 574, and that a test should plant a fixed value or one New makes.'
+time: 2026-11-26T11:18:01.000000+01:00

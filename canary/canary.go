@@ -3,8 +3,9 @@
 // holds a token or a key is handed the planted values in its place, run, and then checked: every file
 // under its home and log folders, read as raw bytes, so a SQLite file and its -wal and -journal files
 // are covered with no driver; its stdout and stderr; and the String, Error and %+v of a value it
-// returned. Files reads each file's and folder's path below the folder too: a program that names a
-// file or a folder after a token has written it there.
+// returned. Files reads each file's and folder's path below the folder too, and each link's target
+// as text: a program that names a file or a folder after a token, or points a link at it, has
+// written it there.
 //
 // Each check looks for each value as it is and re-encoded on the way out: as hex in both cases, as
 // standard and URL-safe base64 at each of the three alignments a value can have in a longer encoded
@@ -14,8 +15,8 @@
 // test with the value's name, the check, the place, the byte offset and the encoding. It never shows
 // the value, any of its encodings, or the bytes around the hit, in a failure or a log, so a test log
 // that is kept or shared holds nothing a reader could take for the real secret's shape. A place, a
-// path or an error that holds one is shown with each value or encoding in it replaced by the value's
-// name in angle brackets, <name>.
+// path or an error that holds one is shown with each run of 16 bytes or more of a value or an
+// encoding in it replaced by the value's name in angle brackets, <name>.
 //
 // What it does not see:
 //   - A value compressed or encrypted (gzip, a zip archive), or written in an encoding the list above
@@ -30,8 +31,8 @@
 //   - A file as it is later: a file is read as it is when it is checked, so check after the program
 //     has ended or closed its files.
 //   - Process memory, the network, and any file outside the folders a test names. Files does not
-//     follow a symbolic link, and it does not read a FIFO, a socket or a device, which could block the
-//     test. Of a regular file it reads the bytes and the path alone: not its extended attributes
+//     follow a symbolic link, though it reads the target's text, and it does not read a FIFO, a socket
+//     or a device, which could block the test. Of a regular file it reads the bytes and the path alone: not its extended attributes
 //     (macOS, Linux), nor a Windows alternate data stream.
 //
 // The package imports the standard library only.
@@ -121,6 +122,9 @@ type needle struct {
 	b, twin        []byte
 }
 
+// run is minLen bytes of a needle: the needle's index in Set.needles, and the offset in it.
+type run struct{ k, at int }
+
 // A Set is the fake secrets one test planted, each under a name. It is made by New, takes values of
 // the caller's own by Own before its first check, and checks places by Files, Reader, Bytes and Value,
 // which may run side by side once every value is planted.
@@ -129,6 +133,7 @@ type Set struct {
 	names   []string
 	values  map[string]string
 	needles []needle
+	runs    map[string][]run // each minLen bytes of a needle, at each needle and offset they are
 	longest int
 	checked atomic.Bool
 	chunk   int // the read size, chunk but in this package's own tests, and even
@@ -138,7 +143,7 @@ type Set struct {
 // crypto/rand, and is the Set that holds them. An empty name or one given twice fails the test.
 func New(t testing.TB, names ...string) *Set {
 	t.Helper()
-	s := &Set{t: t, values: map[string]string{}, chunk: chunk}
+	s := &Set{t: t, values: map[string]string{}, runs: map[string][]run{}, chunk: chunk}
 	for _, name := range names {
 		b := make([]byte, randomBytes)
 		if _, err := rand.Read(b); err != nil {
@@ -154,7 +159,9 @@ func New(t testing.TB, names ...string) *Set {
 // 16 bytes, holds fewer than 8 distinct bytes, or is more than a quarter one byte, as such a value
 // could turn up where no secret leaked; when it equals or holds another planted value, or is held in
 // one, as a hit could not say which leaked; when name is empty or taken; and when a check has already
-// run, so no check reads a Set that changes under it.
+// run, so no check reads a Set that changes under it. A value drawn at random each run can fall to
+// the quarter rule: one digit is over a quarter of 32 random hex characters, a 128-bit key, in about
+// one draw in 574, so plant a fixed value, or one New makes.
 func (s *Set) Own(name, value string) {
 	s.t.Helper()
 	if s.checked.Load() {
@@ -197,6 +204,10 @@ func (s *Set) plant(by, name, value string) {
 	for _, n := range encodings(name, value) {
 		s.needles = append(s.needles, n)
 		s.longest = max(s.longest, len(n.b))
+		for at := 0; at+minLen <= len(n.b); at++ {
+			w := string(n.b[at : at+minLen])
+			s.runs[w] = append(s.runs[w], run{len(s.needles) - 1, at})
+		}
 	}
 }
 
@@ -282,7 +293,8 @@ func escapeRE() *regexp.Regexp { return regexp.MustCompile(`%[0-9A-F]{2}`) }
 // file and folder, links among them, and is the hits, nil when it found none. Each hit fails the
 // test. A hit in a path is at InPath, counted at the entry whose name it ends in. A file it cannot
 // read, and a dir that is missing or no folder, fail the test too, never skipped. It does not follow
-// a symbolic link, nor read a FIFO, a socket or a device.
+// a symbolic link, but reads its target's text as the place "<path> (target)", and it reads no FIFO,
+// socket or device.
 func (s *Set) Files(dir string) []Hit {
 	s.t.Helper()
 	s.begin(CheckFiles)
@@ -303,10 +315,13 @@ func (s *Set) Files(dir string) []Hit {
 			return nil
 		}
 		hits = append(hits, s.inPath(rel)...)
-		if !d.Type().IsRegular() {
-			return nil
+		var found []Hit
+		switch {
+		case d.Type()&fs.ModeSymlink != 0:
+			found, err = s.target(root, rel)
+		case d.Type().IsRegular():
+			found, err = s.file(root, rel)
 		}
-		found, err := s.file(root, rel)
 		if err != nil {
 			s.errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
 		}
@@ -330,6 +345,42 @@ func (s *Set) inPath(rel string) []Hit {
 	}
 	s.report(tl.hits)
 	return tl.hits
+}
+
+// span is the bytes from to to of a text that are a run of a needle of the value planted as name.
+type span struct {
+	from, to int
+	name     string
+}
+
+// spans is each run of minLen bytes or more of a needle in text, as long as it goes on matching.
+func (s *Set) spans(text string) []span {
+	var spans []span
+	for p := 0; p+minLen <= len(text); p++ {
+		for _, r := range s.runs[text[p:p+minLen]] {
+			nd := s.needles[r.k]
+			if p > 0 && r.at > 0 && text[p-1] == nd.b[r.at-1] {
+				continue // the run starts a byte before, and was taken there
+			}
+			to := p + minLen
+			for to < len(text) && r.at+to-p < len(nd.b) && text[to] == nd.b[r.at+to-p] {
+				to++
+			}
+			spans = append(spans, span{p, to, nd.name})
+		}
+	}
+	return spans
+}
+
+// target is the hits in the text of the link rel beneath root, the place "<rel> (target)". It reads
+// the link itself, and opens nothing the text names.
+func (s *Set) target(root *os.Root, rel string) ([]Hit, error) {
+	s.t.Helper()
+	to, err := root.Readlink(rel)
+	if err != nil {
+		return nil, err
+	}
+	return s.scan(CheckFiles, rel+" (target)", strings.NewReader(to))
 }
 
 // file is the hits in the file rel beneath root, reported as Files found them, none when rel is no
@@ -493,7 +544,7 @@ func (s *Set) begin(check string) {
 }
 
 // errorf fails the test with a line that holds no planted value: each string in args, and the line
-// made of them, with every value and encoding in it redacted. The strings are redacted before the
+// made of them, with every run of minLen bytes of a value or an encoding in it redacted. The strings are redacted before the
 // line is made, so a %q that escapes a value's bytes cannot spell them out; an error is shown by %v,
 // which does not escape, so the line's own redaction covers it.
 func (s *Set) errorf(format string, args ...any) {
@@ -519,24 +570,36 @@ func (s *Set) line(format string, args []any) string {
 	return s.redact(fmt.Sprintf(format, shown...))
 }
 
-// redact is text with each needle in it replaced by <name>, the name of its value, the longest
-// needle first where two start at one byte.
+// redact is text with each run of minLen bytes or more of a needle in it replaced by <name>, the
+// name of its value. Where two runs overlap, the longer is named over its length and the other over
+// what is left of it, so a value that runs on into another is <a><b>, and no minLen bytes of either
+// stay. Every needle is minLen bytes or more, so a whole needle is one run.
 func (s *Set) redact(text string) string {
-	var b strings.Builder
-	for i := 0; i < len(text); {
-		best := -1
-		for k, nd := range s.needles {
-			if (best < 0 || len(nd.b) > len(s.needles[best].b)) && strings.HasPrefix(text[i:], string(nd.b)) {
-				best = k
+	spans := s.spans(text)
+	if spans == nil {
+		return text
+	}
+	slices.SortStableFunc(spans, func(a, b span) int { return (b.to - b.from) - (a.to - a.from) })
+	owner := make([]int, len(text)) // 1 + the index of the span that names each byte, 0 for none
+	for i, sp := range spans {
+		for j := sp.from; j < sp.to; j++ {
+			if owner[j] == 0 {
+				owner[j] = i + 1
 			}
 		}
-		if best < 0 {
-			b.WriteByte(text[i])
-			i++
+	}
+	var b strings.Builder
+	for j := 0; j < len(text); {
+		o := owner[j]
+		if o == 0 {
+			b.WriteByte(text[j])
+			j++
 			continue
 		}
-		b.WriteString("<" + s.needles[best].name + ">")
-		i += len(s.needles[best].b)
+		b.WriteString("<" + spans[o-1].name + ">")
+		for j < len(text) && owner[j] == o {
+			j++
+		}
 	}
 	return b.String()
 }

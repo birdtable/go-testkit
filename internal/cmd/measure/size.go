@@ -139,7 +139,15 @@ import (
 // Raised by 3 to 7323, by measure, for canary's package doc (canary.go, 3): a line under "What it
 // does not see" for bytes a program decodes from a planted value, with the way round, Own of the
 // bytes beside the text. Read for removable code: the change is doc only.
-const Ceiling = 7323
+//
+// Raised by 63 to 7386, by measure, for canary.go (48 lines of code, 11 of doc, 4 blank): redact
+// names every run of 16 bytes or more of a needle, found through an index of each needle's 16-byte
+// runs built as a value is planted, in place of whole needles only; and Files reads a link's target
+// as text, the place "<path> (target)", through Root.Readlink. Read for removable code: redact's
+// skip of a run that started a byte before is the one line not needed for the answer, and it keeps
+// a long match from being walked once for each of its bytes, so it stays. Finding the runs is a
+// function of its own, spans, to keep redact under the linter's bound on complexity.
+const Ceiling = 7386
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
