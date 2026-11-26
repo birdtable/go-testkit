@@ -3,8 +3,10 @@
 package canary
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -42,7 +44,7 @@ func TestFilesReadsNoFIFOSwappedInAfterTheWalk(t *testing.T) {
 		}
 		done := make(chan result, 1)
 		go func() {
-			hits, _, err := s.file(root, "swapped", nil)
+			hits, _, err := s.file(root, "swapped", nil, nil)
 			done <- result{hits, err}
 		}()
 		select {
@@ -66,5 +68,40 @@ func TestFilesReadsNoFIFOSwappedInAfterTheWalk(t *testing.T) {
 	read("a writer wrote the value to")
 	if said := rec.said(); said != "" {
 		t.Errorf("reading a FIFO said %q, want nothing", said)
+	}
+}
+
+// TestFilesFailsAnExpectedPathThatIsAFIFO: a FIFO at a path expected to hold the token fails the test
+// naming the path as no regular file, without waiting on it, and says no value is missing from it.
+//
+// What it costs when this fails: a test that expects its value in a FIFO hangs, or passes with
+// nothing read at the path it named.
+func TestFilesFailsAnExpectedPathThatIsAFIFO(t *testing.T) {
+	t.Parallel()
+	rec := newRecorder(t)
+	var s *Set
+	if rec.do(func() { s = New(rec, "token") }) {
+		t.Fatalf("planting: %s", rec.said())
+	}
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, "secrets.json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan []Hit, 1)
+	go func() { done <- s.Expect("token", "secrets.json").Files(dir) }()
+	select {
+	case hits := <-done:
+		if hits != nil {
+			t.Errorf("Files with a FIFO expected: %+v, want no hits", hits)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Files with a FIFO expected waits on it")
+	}
+	said := rec.said()
+	if want := fmt.Sprintf(`canary: Files expects "secrets.json" under %q, which is no regular file`, dir); !strings.Contains(said, want) {
+		t.Errorf("Files with a FIFO expected said %q, want %q", said, want)
+	}
+	if strings.Contains(said, "is expected in") {
+		t.Errorf("Files said a value is not there in a path it already refused: %q", said)
 	}
 }
