@@ -289,7 +289,7 @@ func (s *Set) Files(dir string) []Hit {
 		}
 	}()
 	var hits []Hit
-	_ = fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
+	_ = fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error { //nolint:errcheck // the callback ends nil on every path, so WalkDir does
 		if err != nil {
 			s.errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
 			return nil
@@ -362,7 +362,7 @@ func (s *Set) Reader(place string, r io.Reader) []Hit {
 func (s *Set) Bytes(place string, b []byte) []Hit {
 	s.t.Helper()
 	s.begin(CheckBytes)
-	hits, _ := s.scan(CheckBytes, place, bytes.NewReader(b))
+	hits, _ := s.scan(CheckBytes, place, bytes.NewReader(b)) //nolint:errcheck // a bytes.Reader fails only at its end, which scan ends on
 	return hits
 }
 
@@ -383,7 +383,7 @@ func (s *Set) Value(place string, v any) []Hit {
 	forms = append(forms, form{"%+v", fmt.Sprintf("%+v", v)})
 	var hits []Hit
 	for _, f := range forms {
-		found, _ := s.scan(CheckValue, place+" ("+f.name+")", strings.NewReader(f.text))
+		found, _ := s.scan(CheckValue, place+" ("+f.name+")", strings.NewReader(f.text)) //nolint:errcheck // a strings.Reader fails only at its end, which scan ends on
 		hits = append(hits, found...)
 	}
 	return hits

@@ -35,7 +35,7 @@ func unreadable(t *testing.T, path string) {
 	// kernel32's LockFileEx, which the syscall package does not export, over every byte.
 	lockFileEx := syscall.NewLazyDLL("kernel32.dll").NewProc("LockFileEx")
 	var o syscall.Overlapped
-	if ok, _, err := lockFileEx.Call(uintptr(h), lockExclusive|lockNoWait, 0, 0xFFFFFFFF, 0xFFFFFFFF, uintptr(unsafe.Pointer(&o))); ok == 0 {
+	if ok, _, err := lockFileEx.Call(uintptr(h), lockExclusive|lockNoWait, 0, 0xFFFFFFFF, 0xFFFFFFFF, uintptr(unsafe.Pointer(&o))); ok == 0 { //nolint:gosec // G103: LockFileEx takes its OVERLAPPED by pointer, and o outlives the call
 		t.Fatalf("locking %s: %v", path, err)
 	}
 	if _, err := os.ReadFile(path); err == nil {
