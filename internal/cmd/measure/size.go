@@ -52,12 +52,19 @@ import (
 // withGoResolver appends netdns=go to the rerun's GODEBUG, keeping the caller's settings (17), and
 // nonetwork.go's doc says so and narrows the limit to programs that are not Go (2).
 //
-// Raised by 365 to 6357, by measure, for RequireMain, the check that every package's TestMain calls
+// Raised by 136 to 6128, by measure, for BuildAt reading the old tree raw, from the second review
+// of v0.4.0: buildat.go is 319, up from 183. git archive and its tar reader give way to git ls-tree
+// -r -z, its parser, and git cat-file --batch, streamed through an os.Root, so no filter or attribute
+// of the repository applies; every git call is given GIT_NO_LAZY_FETCH=1, and a tree a partial clone
+// lacks is refused, saying so, and only a missing object is said so; and the doc says what the tree
+// holds and which git the promise needs.
+//
+// Raised by 365 to 6493, by measure, for RequireMain, the check that every package's TestMain calls
 // Main: requiremain.go is 363, go list -e -json for darwin, linux and windows with GOARCH=amd64 and cgo
 // off, the TestMain and its call read with go/parser, the opt-out line, the file and build line that
 // leave a TestMain out, a package a pattern names that a system builds nothing of passed, go's errors
 // with the import they name, and its doc; and doc.go's two lines name it (2).
-const Ceiling = 6357
+const Ceiling = 6493
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

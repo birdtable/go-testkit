@@ -1,9 +1,9 @@
 package testkit
 
 import (
-	"archive/tar"
-	"bytes"
+	"bufio"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -318,25 +318,31 @@ func TestBuildAtUnderGoOfflineFailsAModuleTheCacheLacksAndNamesIt(t *testing.T) 
 	}
 }
 
-// TestUnpackRefusesAnEntryThatLeavesItsFolderOrIsOfAnotherKind: untar, which writes a BuildAt's tree,
-// refuses an entry whose path climbs out of its folder, a file written through a link that points out
-// of it, an absolute link it would follow, and an entry of a kind git archive does not write, a
-// character device, and writes nothing outside its folder for any of them. The planted red of each
-// row is untar returning nil.
+// TestUnpackRefusesAnEntryThatLeavesItsFolderOrIsOfAnotherKind: unpackEntries, which writes a BuildAt's
+// tree from git ls-tree's entries and git cat-file's answers, refuses an entry whose path climbs out of
+// its folder, a file written through a link that points out of it, an absolute link it would follow,
+// an entry of a kind it does not write, a tree, and a blob git answers is missing, and writes nothing
+// outside its folder for any of them. The planted red of each row is unpackEntries returning nil, and
+// of the last its error not being errMissing, which lacking reads to say the clone is partial.
 //
 // What it costs when this fails: a tree with a crafted path or link writes outside the build's
-// folder, over a file of the person's.
+// folder, over a file of the person's, or a missing object is read as a broken repository.
 func TestUnpackRefusesAnEntryThatLeavesItsFolderOrIsOfAnotherKind(t *testing.T) {
 	t.Parallel()
+	one, two := strings.Repeat("1", 40), strings.Repeat("2", 40)
+	answer := func(object, body string) string { return fmt.Sprintf("%s blob %d\n%s\n", object, len(body), body) }
 	ran := 0
 	for _, tc := range []struct {
 		row     string
-		entries []tar.Header
+		entries []entry
+		answers string
+		missing bool
 	}{
-		{"a path that climbs out", []tar.Header{{Name: "../outside", Typeflag: tar.TypeReg, Mode: 0o644}}},
-		{"a file through a link out", []tar.Header{{Name: "out", Typeflag: tar.TypeSymlink, Linkname: ".."}, {Name: "out/outside", Typeflag: tar.TypeReg, Mode: 0o644}}},
-		{"a file through an absolute link", []tar.Header{{Name: "abs", Typeflag: tar.TypeSymlink, Linkname: "/"}, {Name: "abs/outside", Typeflag: tar.TypeReg, Mode: 0o644}}},
-		{"a character device", []tar.Header{{Name: "dev", Typeflag: tar.TypeChar, Mode: 0o644}}},
+		{"a path that climbs out", []entry{{"100644", "blob", one, "../outside"}}, answer(one, "x"), false},
+		{"a file through a link out", []entry{{"120000", "blob", one, "out"}, {"100644", "blob", two, "out/outside"}}, answer(one, "..") + answer(two, "x"), false},
+		{"a file through an absolute link", []entry{{"120000", "blob", one, "abs"}, {"100644", "blob", two, "abs/outside"}}, answer(one, "/") + answer(two, "x"), false},
+		{"a tree", []entry{{"040000", "tree", one, "outside"}}, "", false},
+		{"a blob git lacks", []entry{{"100644", "blob", one, "a.go"}}, one + " missing\n", true},
 	} {
 		ran++
 		parent := t.TempDir()
@@ -344,33 +350,169 @@ func TestUnpackRefusesAnEntryThatLeavesItsFolderOrIsOfAnotherKind(t *testing.T) 
 		if err := os.Mkdir(into, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		var buf bytes.Buffer
-		tw := tar.NewWriter(&buf)
-		for _, h := range tc.entries {
-			if err := tw.WriteHeader(&h); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := tw.Close(); err != nil {
-			t.Fatal(err)
-		}
 		root, err := os.OpenRoot(into)
 		if err != nil {
 			t.Fatal(err)
 		}
-		uerr := untar(root, &buf)
+		uerr := unpackEntries(root, tc.entries, bufio.NewReader(strings.NewReader(tc.answers)))
 		if err := root.Close(); err != nil {
 			t.Fatal(err)
 		}
 		if uerr == nil {
-			t.Errorf("%s: untar gave nil, want a refusal", tc.row)
+			t.Errorf("%s: unpackEntries gave nil, want a refusal", tc.row)
+		} else if errors.Is(uerr, errMissing) != tc.missing {
+			t.Errorf("%s: unpackEntries gave %v, which is errMissing %v, want %v", tc.row, uerr, !tc.missing, tc.missing)
 		}
 		if _, err := os.Lstat(filepath.Join(parent, "outside")); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("%s: untar wrote outside its folder: %v", tc.row, err)
+			t.Errorf("%s: unpackEntries wrote outside its folder: %v", tc.row, err)
 		}
 	}
-	if ran != 4 {
-		t.Fatalf("ran %d rows, want 4", ran)
+	if ran != 5 {
+		t.Fatalf("ran %d rows, want 5", ran)
+	}
+}
+
+// fileURL is the file:// URL of the folder dir, a drive's path given the slash git wants before it.
+func fileURL(dir string) string {
+	p := filepath.ToSlash(dir)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return "file://" + p
+}
+
+// TestBuildAtInAPartialCloneFetchesNothingAndSaysTheCloneIsPartial: in a blobless clone of
+// upgradeRepo (git clone --filter=blob:none from a file:// URL), which lacks v0.1.0's program, BuildAt
+// of v0.1.0 fails its build, Run giving code -1 with an error that says the clone is partial and lacks
+// the tree, and nothing beneath the clone's .git changed: no pack was fetched from the promisor remote.
+// The planted red is GIT_NO_LAZY_FETCH left out of git's environment: git fetches the blob, writes its
+// pack beneath .git, and the build passes. It needs the git CI has, 2.45 or later.
+//
+// What it costs when this fails: a CI checkout with filter: blob:none makes every BuildAt reach the
+// network from a test, with what credentials the checkout left, and write into .git.
+func TestBuildAtInAPartialCloneFetchesNothingAndSaysTheCloneIsPartial(t *testing.T) {
+	// serial: t.Chdir into the clone.
+	src := upgradeRepo(t)
+	gitIn(t, src, "config", "uploadpack.allowFilter", "true")
+	parent := t.TempDir()
+	gitIn(t, parent, "clone", "-q", "--filter=blob:none", fileURL(src), "clone")
+	clone := filepath.Join(parent, "clone")
+	before := gitState(t, clone)
+	t.Chdir(filepath.Join(clone, "app", "cmd"))
+	r := BuildAt(t, "v0.1.0", "cmd/upg").Run("version")
+	if r.Code != -1 || !strings.Contains(r.Stderr, "the clone is partial") || !strings.Contains(r.Stderr, "lacks the tree of") {
+		t.Errorf("v0.1.0 in a blobless clone: %+v, want code -1 and an error saying the clone is partial and lacks the tree", r)
+	}
+	after := gitState(t, clone)
+	keys := maps.Clone(before)
+	maps.Copy(keys, after)
+	for _, k := range slices.Sorted(maps.Keys(keys)) {
+		if before[k] != after[k] {
+			t.Errorf(".git%s was %q and is %q: git fetched from the promisor remote", k, before[k], after[k])
+		}
+	}
+}
+
+// TestBuildAtInAPartialCloneSaysARefusalAsItIsAndNotAsAMissingTree: in a blobless clone that holds
+// every object of the tree it builds, a refusal of another kind is said as itself, never as the clone
+// being partial. The tree, written by git hash-object --literally, names one file twice, so the second
+// write is refused as a file that exists; its blob is fetched into the clone first. The planted red is
+// unpack giving every failure of the unpacking to lacking: the error says the clone is partial and
+// tells the person to fetch, which fixes nothing.
+//
+// What it costs when this fails: a refusal on safety, a path or link that climbs out of the build's
+// folder, reads as a missing object in a partial clone, and its advice (fetch, clone again) hides it.
+func TestBuildAtInAPartialCloneSaysARefusalAsItIsAndNotAsAMissingTree(t *testing.T) {
+	// serial: t.Chdir into the clone.
+	src := upgradeRepo(t)
+	gitIn(t, src, "config", "uploadpack.allowFilter", "true")
+	scratch := t.TempDir()
+	content := filepath.Join(scratch, "dup.txt")
+	if err := os.WriteFile(content, []byte("dup\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blob := gitIn(t, src, "hash-object", "-w", content)
+	raw, err := hex.DecodeString(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := append([]byte("100644 dup\x00"), raw...)
+	treeFile := filepath.Join(scratch, "tree")
+	if err := os.WriteFile(treeFile, append(slices.Clone(entry), entry...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tree := gitIn(t, src, "hash-object", "-t", "tree", "--literally", "-w", treeFile)
+	commit := gitIn(t, src, "commit-tree", "-p", "HEAD", "-m", "a tree that names one file twice", tree)
+	gitIn(t, src, "tag", "dup", commit)
+	parent := t.TempDir()
+	gitIn(t, parent, "clone", "-q", "--filter=blob:none", fileURL(src), "clone")
+	clone := filepath.Join(parent, "clone")
+	gitIn(t, clone, "cat-file", "blob", blob) // fetched here, with no GIT_NO_LAZY_FETCH, so the clone holds it
+	t.Chdir(filepath.Join(clone, "app", "cmd"))
+	r := BuildAt(t, "dup", "cmd/upg").Run("version")
+	if r.Code != -1 || !strings.Contains(r.Stderr, "unpacking dup") || strings.Contains(r.Stderr, "partial") {
+		t.Errorf("a tree naming dup twice, in a blobless clone that holds it: %+v, want code -1 and the refusal of dup, not said as a partial clone", r)
+	}
+}
+
+// rawMain is the program of TestBuildAtReadsTheTreeAsCommitted: it prints, quoted, the two files it
+// embeds.
+const rawMain = `package main
+
+import (
+	_ "embed"
+	"fmt"
+)
+
+//go:embed note.txt
+var note string
+
+//go:embed extra.txt
+var extra string
+
+func main() { fmt.Printf("%q %q", note, extra) }
+`
+
+// TestBuildAtReadsTheTreeAsCommitted: an old tree whose .gitattributes gives note.txt a smudge filter
+// the repository's own config sets, and eol=crlf, and marks extra.txt export-ignore, and which holds a
+// submodule, builds, and its program embeds both files as committed: note.txt with its LF ending and
+// the filter not run, so nothing is written beneath .git, and extra.txt present. The planted red of
+// each is reading the tree through git archive: the filter writes .git/smudged, note.txt ends CRLF, and
+// extra.txt is left out, so the build fails.
+//
+// What it costs when this fails: Git LFS set up in the repository's config runs for an old tree's
+// files, may download, and writes beneath .git; or the build sees a tree no checkout gives.
+func TestBuildAtReadsTheTreeAsCommitted(t *testing.T) {
+	// serial: t.Chdir into the repository.
+	repo := t.TempDir()
+	gitIn(t, repo, "init", "-q")
+	smudged := filepath.ToSlash(filepath.Join(repo, ".git", "smudged"))
+	gitIn(t, repo, "config", "filter.spy.smudge", "tee '"+smudged+"'")
+	writeTree(t, repo, map[string]string{
+		"app/go.mod":                 "module example.invalid/raw\n\ngo 1.27\n",
+		"app/cmd/raw/main.go":        rawMain,
+		"app/cmd/raw/note.txt":       "raw\n",
+		"app/cmd/raw/extra.txt":      "kept\n",
+		"app/cmd/raw/.gitattributes": "note.txt filter=spy text eol=crlf\nextra.txt export-ignore\n",
+	})
+	gitIn(t, repo, "add", "-A")
+	gitIn(t, repo, "commit", "-q", "-m", "a tree with a filter, an export-ignore and a submodule")
+	head := gitIn(t, repo, "rev-parse", "HEAD")
+	gitIn(t, repo, "update-index", "--add", "--cacheinfo", "160000,"+head+",app/sub")
+	gitIn(t, repo, "commit", "-q", "-m", "the submodule")
+	gitIn(t, repo, "tag", "v0.1.0")
+	before := gitState(t, repo)
+	t.Chdir(filepath.Join(repo, "app"))
+	if r := BuildAt(t, "v0.1.0", "cmd/raw").Run(); r.Code != 0 || r.Stdout != `"raw\n" "kept\n"` {
+		t.Errorf("the tree as committed: %+v, want code 0 and %q", r, `"raw\n" "kept\n"`)
+	}
+	after := gitState(t, repo)
+	keys := maps.Clone(before)
+	maps.Copy(keys, after)
+	for _, k := range slices.Sorted(maps.Keys(keys)) {
+		if before[k] != after[k] {
+			t.Errorf(".git%s was %q and is %q: the repository's smudge filter ran", k, before[k], after[k])
+		}
 	}
 }
 
