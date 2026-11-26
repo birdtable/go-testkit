@@ -1,6 +1,7 @@
 package canary
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
@@ -392,7 +393,8 @@ func TestATooPlainValueOrAClashingNameStopsTheTest(t *testing.T) {
 
 // TestNoLineACheckGivesHoldsTheValueOrAnyOfItsEncodings: every line the checks give for a hit in each
 // encoding, for each refusal, for a folder whose files and folders are named with a value, hold it
-// and cannot be read, and for a read that fails with the value in its error and its place, which %q
+// and cannot be read, for a zip entry named with a value that holds it and an archive named with it
+// that is not there, and for a read that fails with the value in its error and its place, which %q
 // would escape, holds no 16 bytes in a row of the value or of any encoding of it, only its name.
 //
 // What it costs when this fails: a test log a person keeps or shares holds the planted value, or
@@ -413,6 +415,13 @@ func TestNoLineACheckGivesHoldsTheValueOrAnyOfItsEncodings(t *testing.T) {
 	if hits := s.Files(namedFolder(t, s)); len(hits) != namedHits {
 		t.Fatalf("Files of a folder named with the token: %d hits, want %d", len(hits), namedHits)
 	}
+	tok := s.Get("token")
+	if hits := s.Zip(writeZip(t, []zipEntry{{name: "logs/" + tok + ".log", method: zip.Deflate, body: "token " + tok}})); len(hits) != 2 {
+		t.Fatalf("Zip of an entry named with the token that holds it: %d hits, want 2", len(hits))
+	}
+	if hits := s.Zip(filepath.Join(t.TempDir(), tok+".zip")); hits != nil {
+		t.Fatalf("Zip of an archive that is not there: %+v, want no hits", hits)
+	}
 	if hits := s.Reader("from "+encodedValue, iotest.ErrReader(errors.New("gone after "+encodedValue))); hits != nil {
 		t.Fatalf("a read that fails: %+v, want no hits", hits)
 	}
@@ -426,6 +435,9 @@ func TestNoLineACheckGivesHoldsTheValueOrAnyOfItsEncodings(t *testing.T) {
 	}
 	if !strings.Contains(said, "canary: Files cannot read") {
 		t.Fatalf("the checks gave no line for the file Files cannot read: %q", said)
+	}
+	if !strings.Contains(said, "canary: Zip cannot open the archive") || !strings.Contains(said, ".log\" (Zip), as raw") {
+		t.Fatalf("the checks gave no line for Zip's hit in a name or the archive it cannot open: %q", said)
 	}
 	for _, nd := range s.needles {
 		for i := 0; i+16 <= len(nd.b); i++ {
