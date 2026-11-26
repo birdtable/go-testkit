@@ -135,7 +135,11 @@ import (
 // package doc, which names it and says Files reads no extended attribute or alternate data stream.
 // Read for removable code: the needle is fmt's own %d of the bytes, the same list as %v, with
 // its brackets cut, so no loop is added.
-const Ceiling = 7320
+//
+// Raised by 3 to 7323, by measure, for canary's package doc (canary.go, 3): a line under "What it
+// does not see" for bytes a program decodes from a planted value, with the way round, Own of the
+// bytes beside the text. Read for removable code: the change is doc only.
+const Ceiling = 7323
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

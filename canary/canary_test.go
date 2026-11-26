@@ -501,6 +501,43 @@ func TestAKeyHeldAsBytesIsFoundAsFmtPrintsIt(t *testing.T) {
 	sameHits(t, "a log line", s.Bytes("log", line.Bytes()), []Hit{hit(CheckBytes, "log", len("auth: signing with ["))})
 }
 
+// TestAKeyTheProgramDecodesIsFoundUnderTheNameOfItsBytes: a program handed a key as base64 text
+// holds the bytes it decodes, and the text's needles do not find those bytes. Planted beside the text
+// with Own, as the package doc says, the bytes are found under their own name when the program prints
+// them with %v.
+//
+// What it costs when this fails: the doc's way round for a decoded key finds nothing, or the limit it
+// works around is not there.
+func TestAKeyTheProgramDecodesIsFoundUnderTheNameOfItsBytes(t *testing.T) {
+	t.Parallel()
+	raw, err := hex.DecodeString("9f3c51e07a28d4b6c1f805937e6a2db48c17f2e95a0b63d8e4712fc9b05a86d3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := base64.StdEncoding.EncodeToString(raw)
+	decode := func(s *Set) []byte {
+		b, err := base64.StdEncoding.DecodeString(s.Get("key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+
+	rec := newRecorder(t)
+	var s *Set
+	if rec.do(func() { s = New(rec); s.Own("key", text) }) {
+		t.Fatalf("planting the text: %s", rec.said())
+	}
+	sameHits(t, "the decoded bytes, with the text alone planted", s.Value("key", decode(s)), nil)
+
+	rec = newRecorder(t)
+	if rec.do(func() { s = New(rec); s.Own("key", text); s.Own("key-bytes", string(raw)) }) {
+		t.Fatalf("planting the text and its bytes: %s", rec.said())
+	}
+	sameHits(t, "the decoded bytes, with them planted too", s.Value("key", decode(s)),
+		[]Hit{{Name: "key-bytes", Check: CheckValue, Place: "key (%+v)", Offset: int64(len("[")), Encoding: Decimal, Count: 1}})
+}
+
 // TestFilesFailsOnWhatItCannotRead: a file Files cannot open fails the test naming the file, with
 // the hits in the other files still found, and a folder that is not there, or is a file, fails the
 // test naming it.

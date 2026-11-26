@@ -9,17 +9,20 @@
 // Each check looks for each value as it is and re-encoded on the way out: as hex in both cases, as
 // standard and URL-safe base64 at each of the three alignments a value can have in a longer encoded
 // string, as a URL's query and path escaping as Go's url.QueryEscape and url.PathEscape write them,
-// as UTF-16, little and big endian, and as its bytes in decimal, the way fmt's %v prints a []byte or
-// a [N]byte, the type a Go program most often holds a key in. A hit fails the test with the value's
-// name, the check, the place, the byte offset and the encoding. It never shows the value, any of
-// its encodings, or the bytes around the hit, in a failure or a log, so a test log that is kept or
-// shared holds nothing a reader could take for the real secret's shape. A place, a path or an error
-// that holds one is shown with each value or encoding in it replaced by the value's name in angle
-// brackets, <name>.
+// as UTF-16, little and big endian, and as its bytes in decimal, the way fmt's %v prints the value
+// held as a []byte or a [N]byte: its own bytes, not bytes a program decodes from it. A hit fails the
+// test with the value's name, the check, the place, the byte offset and the encoding. It never shows
+// the value, any of its encodings, or the bytes around the hit, in a failure or a log, so a test log
+// that is kept or shared holds nothing a reader could take for the real secret's shape. A place, a
+// path or an error that holds one is shown with each value or encoding in it replaced by the value's
+// name in angle brackets, <name>.
 //
 // What it does not see:
 //   - A value compressed or encrypted (gzip, a zip archive), or written in an encoding the list above
 //     does not name, base32 among them.
+//   - A value the program decodes. The bytes a program holds after decoding the base64 or hex text
+//     it was handed, a value New plants among them, are another value, and no needle of the text
+//     finds them. Plant them too, beside the text: s.Own("<name>-bytes", string(raw)).
 //   - A value split across a boundary the program puts in its own output. SQLite moves the tail of a
 //     long record to overflow pages with a 4-byte page number in between, so a value that spans that
 //     boundary is not found; a planted value is 40 bytes, so it takes a record that spills right at
