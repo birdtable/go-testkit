@@ -58,7 +58,7 @@ packages:
     role: example
     job: testkit as a second business uses it, through the exported API, with values unlike ours
     may: []
-    tests-may: [., fake]
+    tests-may: [., canary, fake]
   - path: internal/example/secondconsumer/sweep
     role: example
     job: the second consumer's own stand-in, fake.Main with a step of its own
