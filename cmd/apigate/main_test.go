@@ -111,12 +111,12 @@ func (r *repo) commit(tags ...string) {
 	}
 }
 
-// gate runs the gate with -dir naming folder below the top, slash-separated, or the top for "", and
-// gives its exit code and lines.
-func (r *repo) gate(folder string) (int, string) {
+// gate runs the gate with -dir naming folder below the top, slash-separated, or the top for "", and args,
+// and gives its exit code and lines.
+func (r *repo) gate(folder string, args ...string) (int, string) {
 	r.t.Helper()
 	var out, errOut bytes.Buffer
-	code := run(r.t.Context(), []string{"-dir", filepath.Join(r.dir, filepath.FromSlash(folder))}, &out, &errOut)
+	code := run(r.t.Context(), append([]string{"-dir", filepath.Join(r.dir, filepath.FromSlash(folder))}, args...), &out, &errOut)
 	return code, out.String() + errOut.String()
 }
 
@@ -139,6 +139,7 @@ type gateRow struct {
 	name   string
 	tree   func(r *repo)
 	folder string   // the module's folder below the top, or "" for the top
+	args   []string // the gate's arguments but -dir
 	code   int      // the exit code
 	lines  []string // lines the gate's output holds, each whole
 }
@@ -151,7 +152,7 @@ func check(t *testing.T, rows []gateRow) {
 			t.Parallel()
 			r := plant(t)
 			row.tree(r)
-			code, out := r.gate(row.folder)
+			code, out := r.gate(row.folder, row.args...)
 			have := strings.Split(out, "\n")
 			for _, want := range row.lines {
 				if !slices.Contains(have, want) {
@@ -418,10 +419,166 @@ func TestTheGateIsGreenOnATreeItsFilesDescribe(t *testing.T) {
 	})
 }
 
-// The gate takes -dir alone, and exits 2 for anything else, before it reads a file.
-func TestTheGateTakesDirAloneAndExitsTwoOtherwise(t *testing.T) {
+// onlyA is m.go with B removed, the break the -before-head rows make.
+const onlyA = "// Package m is a module the gate reads.\npackage m\n\n// A is one.\nfunc A() int { return 1 }\n"
+
+// beforeHead is the -before-head rows' argument.
+var beforeHead = []string{"-before-head"} //nolint:gochecknoglobals // the rows' one argument
+
+// With -before-head the gate's base leaves out the tags on the head: it is the newest tag that is
+// an ancestor of the head and does not point at it, so a gate run at a tag holds the breaks since
+// the tag before. Without it, the same head reads as before.
+func TestTheGateBeforeTheHeadTakesTheNewestTagThatIsNotOnTheHead(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{{"extra"}, {"-tags", "x"}, {"-dir", ".", "extra"}} {
+	check(t, []gateRow{
+		{
+			name: "a head with its own tag, whose break since the tag before has no line",
+			tree: func(r *repo) {
+				r.commit("v0.1.0")
+				r.write(map[string]string{"m.go": onlyA})
+				r.commit("v0.2.0")
+			},
+			args: beforeHead,
+			code: 1,
+			lines: []string{
+				"+- B: removed",
+				"api: the breaks since v0.1.0 are not api/breaks/v0.1.0.txt (- the file, + apidiff); a commit that removes or changes an exported name adds apidiff's line there",
+			},
+		},
+		{
+			name: "a head with its own tag, whose break since the tag before has its line",
+			tree: func(r *repo) {
+				r.commit("v0.1.0")
+				r.write(map[string]string{"m.go": onlyA, "api/breaks/v0.1.0.txt": "- B: removed\n"})
+				r.commit("v0.2.0")
+			},
+			args:  beforeHead,
+			lines: []string{"api: the breaks since v0.1.0 are the 1 lines of api/breaks/v0.1.0.txt"},
+		},
+		{
+			name: "the same head without -before-head, read as before",
+			tree: func(r *repo) {
+				r.commit("v0.1.0")
+				r.write(map[string]string{"m.go": onlyA})
+				r.commit("v0.2.0")
+			},
+			lines: []string{"api: the breaks since v0.2.0 are the 0 lines of api/breaks/v0.2.0.txt"},
+		},
+		{
+			name: "a head with two tags",
+			tree: func(r *repo) {
+				r.commit("v0.1.0")
+				r.write(map[string]string{"m.go": onlyA, "api/breaks/v0.1.0.txt": "- B: removed\n"})
+				r.commit("v0.2.0", "v0.2.1")
+			},
+			args:  beforeHead,
+			lines: []string{"api: the breaks since v0.1.0 are the 1 lines of api/breaks/v0.1.0.txt"},
+		},
+		{
+			name: "a head with no tag",
+			tree: func(r *repo) {
+				r.commit("v0.1.0")
+				r.write(map[string]string{"m.go": onlyA, "api/breaks/v0.1.0.txt": "- B: removed\n"})
+				r.commit()
+			},
+			args:  beforeHead,
+			lines: []string{"api: the breaks since v0.1.0 are the 1 lines of api/breaks/v0.1.0.txt"},
+		},
+		{
+			name: "a head whose only tag is its own",
+			tree: func(r *repo) {
+				r.commit()
+				r.write(map[string]string{"m.go": onlyA})
+				r.commit("v0.1.0")
+			},
+			args:  beforeHead,
+			lines: []string{"api: no v* tag before the head's own, so no break is held; the systems and the marks are"},
+		},
+		{
+			name:  "a first commit with its own tag",
+			tree:  func(r *repo) { r.commit("v0.1.0") },
+			args:  beforeHead,
+			lines: []string{"api: no v* tag before the head's own, so no break is held; the systems and the marks are"},
+		},
+		{
+			name: "a tagged merge whose parents reach two tags, the nearer the base",
+			tree: func(r *repo) {
+				r.commit("v0.1.0")
+				r.git("checkout", "--quiet", "-b", "side")
+				r.write(map[string]string{"m.go": onlyA, "api/breaks/v0.1.0.txt": "- B: removed\n"})
+				r.commit("v0.2.0")
+				r.git("checkout", "--quiet", "main")
+				r.write(map[string]string{"other.txt": "other\n"})
+				r.commit()
+				r.git("merge", "--quiet", "--no-ff", "-m", "merged", "side")
+				r.git("tag", "v0.3.0")
+			},
+			args:  beforeHead,
+			lines: []string{"api: the breaks since v0.2.0 are the 0 lines of api/breaks/v0.2.0.txt"},
+		},
+		{
+			name: "a module in a folder at its own tag, held to its tag before",
+			tree: func(r *repo) {
+				subModule(r, "\n// Write writes.\nfunc Write() {}\n")
+				r.commit("sub/v0.1.0")
+				subModule(r, "")
+				r.write(map[string]string{"sub/api/breaks/v0.1.0.txt": "- Write: removed\n"})
+				r.commit("sub/v0.2.0", "v0.2.0")
+			},
+			folder: "sub",
+			args:   beforeHead,
+			lines:  []string{"api: the breaks since sub/v0.1.0 are the 1 lines of api/breaks/v0.1.0.txt"},
+		},
+		{
+			name: "git describe failing at a parent other than with no tag",
+			tree: func(r *repo) {
+				r.commit("v0.1.0")
+				r.commit()
+				r.commit("v0.2.0")
+				// The parent's object goes: git rev-parse reads the parents from the head alone, and
+				// git describe fails at the parent. Git makes the file read-only, which Windows will
+				// not remove.
+				parent := strings.TrimSpace(r.git("rev-parse", "HEAD^"))
+				object := filepath.Join(r.dir, ".git", "objects", parent[:2], parent[2:])
+				if err := os.Chmod(object, 0o600); err != nil {
+					r.t.Fatal(err)
+				}
+				if err := os.Remove(object); err != nil {
+					r.t.Fatal(err)
+				}
+			},
+			args:  beforeHead,
+			code:  1,
+			lines: []string{"api: git describe could not read the v* tags, so the breaks cannot be held"},
+		},
+		{
+			name: "git failing to read the head's parents",
+			tree: func(r *repo) {
+				r.commit("v0.1.0")
+				r.commit("v0.2.0")
+				r.git("pack-refs", "--all")
+				f, err := os.OpenFile(filepath.Join(r.dir, ".git", "packed-refs"), os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					r.t.Fatal(err)
+				}
+				if _, err := f.WriteString("not a ref line\n"); err != nil {
+					r.t.Fatal(err)
+				}
+				if err := f.Close(); err != nil {
+					r.t.Fatal(err)
+				}
+			},
+			args:  beforeHead,
+			code:  1,
+			lines: []string{"api: git cannot read the head's parents, so the breaks cannot be held"},
+		},
+	})
+}
+
+// The gate takes -dir and -before-head alone, and exits 2 for anything else, before it reads a file.
+func TestTheGateTakesDirAndBeforeHeadAloneAndExitsTwoOtherwise(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"extra"}, {"-tags", "x"}, {"-dir", ".", "extra"}, {"-before-head=x"}, {"-before-head", "extra"}} {
 		var out, errOut bytes.Buffer
 		if code := run(t.Context(), args, &out, &errOut); code != 2 || out.Len() != 0 {
 			t.Errorf("apigate %q: exit %d with %q, want 2 and nothing on stdout", args, code, out.String())

@@ -104,11 +104,16 @@ import (
 // leave a TestMain out, a package a pattern names that a system builds nothing of passed, go's errors
 // with the import they name, and its doc; and doc.go's two lines name it (2).
 //
-// Raised by 447 to 7051, by measure, for canary, the planted fake secrets a test checks files,
+// Raised by 81 to 6685, by measure, for cmd/apigate's -before-head (main.go, 81): check 2's base
+// from the head's parents, each read by git describe and the nearest to the head taken by git
+// rev-list's count, so a gate run at its own tag holds the breaks since the tag before, with a line
+// for each way git fails there, and the docs of the flag and of check 2.
+//
+// Raised by 447 to 7132, by measure, for canary, the planted fake secrets a test checks files,
 // streams and values for: canary.go is 447, the plant and its refusals, each value's needles in raw,
 // hex, base64 at three alignments, URL escaping and UTF-16, the chunked read that keeps a tail so a
 // value across two chunks is found, the four checks and their report, and the package doc's limits.
-const Ceiling = 7051
+const Ceiling = 7132
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
