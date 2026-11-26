@@ -24,6 +24,11 @@ packages:
     job: fake secrets a test plants, and the checks that none reached a file, a stream or a value
     may: []
     tests-may: [.]
+  - path: sizecap
+    role: leaf
+    job: the proof of a reader's size cap at its edge, the cap taken and a byte more refused, for a parser of any format
+    may: []
+    tests-may: [.]
   - path: internal/fakeprogram
     role: leaf
     job: the default stand-in fake.Program builds, a main that calls fake.Main with no steps of its own
@@ -58,7 +63,7 @@ packages:
     role: example
     job: testkit as a second business uses it, through the exported API, with values unlike ours
     may: []
-    tests-may: [., canary, fake]
+    tests-may: [., canary, fake, sizecap]
   - path: internal/example/secondconsumer/sweep
     role: example
     job: the second consumer's own stand-in, fake.Main with a step of its own

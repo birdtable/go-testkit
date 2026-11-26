@@ -183,7 +183,17 @@ import (
 // and name a drive or a share among the paths refused (4). The refusal of a drive or a share is
 // filepath.VolumeName in place of filepath.IsAbs, the same line. Read for removable code: a helper
 // for the check was tried and cost 8 lines more than it in place.
-const Ceiling = 7648
+//
+// Raised by 146 to 7794, by measure, for sizecap (sizecap/sizecap.go, 146: 95 of code, 39 of doc, 12
+// blank), a package of its own, for a consumer's ask: the package
+// doc, which says what a side proves, what the count of bytes read does not see and why spaces are
+// the safe default, and the imports (30); Option and Fill (16); Prove, its doc and its refusals of what it cannot prove (32) and the two
+// sides, whose lines name the side and the sizes (19); side and the counting reader that cuts each
+// input at its size and says when fill ended short (35); and the reader of spaces that holds no
+// buffer (14). Read for
+// removable code: the count of bytes read is the one check the ticket did not ask for; it stays, as
+// without it a parser that refuses the filler before the cap passes the side at the cap.
+const Ceiling = 7794
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
