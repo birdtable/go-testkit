@@ -166,7 +166,17 @@ import (
 // shared with the deferred close (7). Each count holds its docs. Read for removable code: fill is
 // the loop io.ReadFull runs, without the change of error; a comment goes through the tally in place
 // of scan, whose error a strings.Reader never gives and which would need a lint directive to drop.
-const Ceiling = 7519
+//
+// Raised by 118 to 7637, by measure, for Expect (canary.go, 118): Expected, Set's Expect and
+// Expected's own, which clean and refuse each path, Expected's Files, and Files made a call of
+// files, with their docs (64); the check that each expected path names a regular file and that each
+// expected value was found in it, with its lines (34); file's excuse of an expected value's hits in
+// its file's bytes, apart from the rest (10); scan's read made a function of its own, read, so file
+// reports only the hits it keeps (5); and the package doc's sentence on Expect and three imports
+// (5). Read for removable code: the Lstat check before the walk is the one part a later check also
+// covers, as a path that is no regular file is never read and so fails as a value not there; it
+// stays, so the line names what the path is in place of a missing value.
+const Ceiling = 7637
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
