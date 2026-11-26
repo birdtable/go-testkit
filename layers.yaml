@@ -19,6 +19,11 @@ packages:
     job: a built stand-in program that does a list of steps, for a test that would plant a script
     may: [.]
     tests-may: []
+  - path: canary
+    role: leaf
+    job: fake secrets a test plants, and the checks that none reached a file, a stream or a value
+    may: []
+    tests-may: [.]
   - path: internal/fakeprogram
     role: leaf
     job: the default stand-in fake.Program builds, a main that calls fake.Main with no steps of its own
