@@ -109,14 +109,16 @@ import (
 // rev-list's count, so a gate run at its own tag holds the breaks since the tag before, with a line
 // for each way git fails there, and the docs of the flag and of check 2.
 //
-// Raised by 559 to 7244, by measure, for canary, the planted fake secrets a test checks files,
-// streams and values for: canary.go is 541, the plant and its refusals, each value's needles in raw,
-// hex, base64 at three alignments, URL escaping and UTF-16, the chunked read that keeps a tail so a
-// value across two chunks is found, the four checks and their report, the search of each path below
-// the folder, the redaction that shows a value in a place, a path or an error as its name, the refusal
-// of a check on a Set with nothing planted, and the package doc's limits; open_other.go (12) and
-// open_windows.go (6) open a file without waiting on a FIFO swapped in after the walk.
-const Ceiling = 7244
+// Raised by 534 to 7219, by measure, for canary, the planted fake secrets a test checks files,
+// streams and values for: canary.go, the plant and its refusals, each value's needles in raw, hex,
+// base64 at three alignments, URL escaping and UTF-16 with one hit for the two byte orders one byte
+// apart, the chunked read that keeps a tail so a value across two chunks is found, the four checks
+// and their report, the open that does not wait on a FIFO swapped in after the walk, the search of
+// each path below the folder, the redaction that shows a value in a place, a path or an error as its
+// name, the refusal of a check on a Set with nothing planted, and the package doc's limits. The read
+// for removable code took out 25 lines: unreachable error branches, a helper the standard
+// library has, a guard that guarded nothing and the two one-system open files.
+const Ceiling = 7219
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

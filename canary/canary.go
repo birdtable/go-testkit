@@ -44,8 +44,10 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"unicode/utf16"
 )
@@ -65,7 +67,8 @@ const minLen = 16
 const minDistinct = 8
 
 // chunk is how much of a file or stream a check reads at a time: its memory is one chunk and the tail
-// of the one before it, whatever the size of what it reads.
+// of the one before it, whatever the size of what it reads. It is even, so every read but the last
+// ends at an even offset, past the byte after a UTF-16 needle that ends at an odd one.
 const chunk = 64 << 10
 
 // The encodings a Hit names.
@@ -77,8 +80,8 @@ const (
 	Base64URL = "base64url" // URL-safe base64, at any alignment, padded or not
 	Query     = "query"     // url.QueryEscape, its hex digits in either case
 	Path      = "path"      // url.PathEscape, its hex digits in either case
-	UTF16LE   = "utf16le"   // UTF-16, little endian
-	UTF16BE   = "utf16be"   // UTF-16, big endian
+	UTF16LE   = "utf16le"   // UTF-16, little endian, or of two orders one byte apart the one at an even offset
+	UTF16BE   = "utf16be"   // UTF-16, big endian, the same way
 )
 
 // The checks a Hit names.
@@ -104,10 +107,11 @@ type Hit struct {
 // not in a file's bytes: the hit is in the last name of Place, or across it and the folders above.
 const InPath = -1
 
-// needle is one encoding of one planted value, the bytes a check looks for.
+// needle is one encoding of one planted value, the bytes a check looks for, and for UTF-16 its twin,
+// the value in the other byte order.
 type needle struct {
 	name, encoding string
-	b              []byte
+	b, twin        []byte
 }
 
 // A Set is the fake secrets one test planted, each under a name. It is made by New, takes values of
@@ -120,7 +124,7 @@ type Set struct {
 	needles []needle
 	longest int
 	checked atomic.Bool
-	chunk   int // the read size, chunk but in this package's own tests
+	chunk   int // the read size, chunk but in this package's own tests, and even
 }
 
 // New plants one value per name, each prefix and 32 lowercase hex characters, 128 bits from
@@ -218,20 +222,20 @@ func plain(value string) string {
 func encodings(name, value string) []needle {
 	v := []byte(value)
 	all := []needle{
-		{name, Raw, v},
-		{name, Hex, []byte(hex.EncodeToString(v))},
-		{name, HexUpper, []byte(strings.ToUpper(hex.EncodeToString(v)))},
+		{name, Raw, v, nil},
+		{name, Hex, []byte(hex.EncodeToString(v)), nil},
+		{name, HexUpper, []byte(strings.ToUpper(hex.EncodeToString(v))), nil},
 	}
 	for k := range 3 {
-		all = append(all, needle{name, Base64, aligned(base64.RawStdEncoding, v, k)})
+		all = append(all, needle{name, Base64, aligned(base64.RawStdEncoding, v, k), nil})
 	}
 	for k := range 3 {
-		all = append(all, needle{name, Base64URL, aligned(base64.RawURLEncoding, v, k)})
+		all = append(all, needle{name, Base64URL, aligned(base64.RawURLEncoding, v, k), nil})
 	}
 	for _, q := range []struct {
 		encoding, escaped string
 	}{{Query, url.QueryEscape(value)}, {Path, url.PathEscape(value)}} {
-		all = append(all, needle{name, q.encoding, []byte(q.escaped)}, needle{name, q.encoding, []byte(lowerEscapes(q.escaped))})
+		all = append(all, needle{name, q.encoding, []byte(q.escaped), nil}, needle{name, q.encoding, []byte(lowerEscapes(q.escaped)), nil})
 	}
 	units := utf16.Encode([]rune(value))
 	le, be := make([]byte, 0, 2*len(units)), make([]byte, 0, 2*len(units))
@@ -239,25 +243,15 @@ func encodings(name, value string) []needle {
 		le = binary.LittleEndian.AppendUint16(le, u)
 		be = binary.BigEndian.AppendUint16(be, u)
 	}
-	all = append(all, needle{name, UTF16LE, le}, needle{name, UTF16BE, be})
+	all = append(all, needle{name, UTF16LE, le, be}, needle{name, UTF16BE, be, le})
 
 	var out []needle
 	for _, n := range all {
-		if !hasBytes(out, n.b) {
+		if !slices.ContainsFunc(out, func(o needle) bool { return bytes.Equal(o.b, n.b) }) {
 			out = append(out, n)
 		}
 	}
 	return out
-}
-
-// hasBytes is whether a needle of ns is b.
-func hasBytes(ns []needle, b []byte) bool {
-	for _, n := range ns {
-		if bytes.Equal(n.b, b) {
-			return true
-		}
-	}
-	return false
 }
 
 // aligned is v encoded after k bytes of something else, k from 0 to 2: only the characters whose six
@@ -295,14 +289,12 @@ func (s *Set) Files(dir string) []Hit {
 		}
 	}()
 	var hits []Hit
-	walkErr := fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
+	_ = fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error { //nolint:errcheck // the callback ends nil on every path, so WalkDir does
 		if err != nil {
 			s.errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
 			return nil
 		}
-		if rel != "." {
-			hits = append(hits, s.inPath(rel)...)
-		}
+		hits = append(hits, s.inPath(rel)...)
 		if !d.Type().IsRegular() {
 			return nil
 		}
@@ -313,9 +305,6 @@ func (s *Set) Files(dir string) []Hit {
 		hits = append(hits, found...)
 		return nil
 	})
-	if walkErr != nil {
-		s.errorf("canary: Files cannot walk %q: %v", dir, walkErr)
-	}
 	return hits
 }
 
@@ -339,7 +328,9 @@ func (s *Set) inPath(rel string) []Hit {
 // longer a regular file by the time it is open.
 func (s *Set) file(root *os.Root, rel string) ([]Hit, error) {
 	s.t.Helper()
-	f, err := root.OpenFile(rel, openFlags, 0)
+	// O_NONBLOCK opens a FIFO swapped in since the walk at once, in place of waiting for a writer.
+	// Windows has no FIFO in a folder, and its open reads nothing of the bit.
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -371,10 +362,7 @@ func (s *Set) Reader(place string, r io.Reader) []Hit {
 func (s *Set) Bytes(place string, b []byte) []Hit {
 	s.t.Helper()
 	s.begin(CheckBytes)
-	hits, err := s.scan(CheckBytes, place, bytes.NewReader(b))
-	if err != nil {
-		s.errorf("canary: Bytes cannot read %q: %v", place, err)
-	}
+	hits, _ := s.scan(CheckBytes, place, bytes.NewReader(b)) //nolint:errcheck // a bytes.Reader fails only at its end, which scan ends on
 	return hits
 }
 
@@ -395,21 +383,19 @@ func (s *Set) Value(place string, v any) []Hit {
 	forms = append(forms, form{"%+v", fmt.Sprintf("%+v", v)})
 	var hits []Hit
 	for _, f := range forms {
-		found, err := s.scan(CheckValue, place+" ("+f.name+")", strings.NewReader(f.text))
-		if err != nil {
-			s.errorf("canary: Value cannot read %q: %v", place, err)
-		}
+		found, _ := s.scan(CheckValue, place+" ("+f.name+")", strings.NewReader(f.text)) //nolint:errcheck // a strings.Reader fails only at its end, which scan ends on
 		hits = append(hits, found...)
 	}
 	return hits
 }
 
-// scan reads r a chunk at a time, each chunk after the last longest-1 bytes of the one before so a
-// needle across two chunks is found, and is the hits, one per name and encoding, each reported. An
-// occurrence is counted in the chunk where it ends, so one in the kept tail is not counted twice.
+// scan reads r a chunk at a time, each chunk after the last longest bytes of the one before so a
+// needle across two chunks is found with the byte before it, and is the hits, one per name and
+// encoding, each reported. An occurrence is counted in the chunk where it ends, so one in the kept
+// tail is not counted twice.
 func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 	s.t.Helper()
-	tail := max(s.longest-1, 0)
+	tail := s.longest
 	buf := make([]byte, tail+s.chunk)
 	kept := 0
 	tl := tally{check: check, place: s.redact(place), index: map[[2]string]int{}}
@@ -444,7 +430,10 @@ type tally struct {
 }
 
 // find counts each occurrence of nd in data that ends past its first kept bytes, the tail of the
-// chunk before, whose occurrences that chunk counted.
+// chunk before, whose occurrences that chunk counted. A value whose characters are all under U+0100
+// has its big-endian bytes one byte before its little-endian ones between two such characters, so of
+// a UTF-16 needle and its twin found so, only the one at an even offset counts, as text from the
+// place's start puts it.
 func (tl *tally) find(nd needle, data []byte, kept int) {
 	for i := 0; ; i++ {
 		j := bytes.Index(data[i:], nd.b)
@@ -452,7 +441,11 @@ func (tl *tally) find(nd needle, data []byte, kept int) {
 			return
 		}
 		i += j
-		if i+len(nd.b) <= kept {
+		odd, twinAt := nd.twin != nil && (tl.base+int64(i))%2 == 1, i-1
+		if nd.encoding == UTF16BE {
+			twinAt = i + 1
+		}
+		if i+len(nd.b) <= kept || odd && bytes.HasPrefix(data[twinAt:], nd.twin) {
 			continue
 		}
 		key := [2]string{nd.name, nd.encoding}

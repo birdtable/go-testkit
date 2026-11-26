@@ -1,6 +1,7 @@
 package canary
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -262,6 +263,46 @@ func TestEachEncodingOfAPlantedValueIsFoundAndNamed(t *testing.T) {
 		}
 		got := s.Bytes("out", []byte(lead+row.text+"\n"))
 		sameHits(t, row.claim, got, []Hit{{Name: "key", Check: CheckBytes, Place: "out", Offset: int64(len(lead) + row.at), Encoding: row.encoding, Count: 1}})
+	}
+}
+
+// TestAValueInUTF16TextIsOneHitInItsByteOrder: a value New plants, written in UTF-16 text either way,
+// with the text before and after it in UTF-16 too, is one hit naming that byte order at the offset of
+// its own bytes, wherever reads of 8 bytes cut it. Between two characters under U+0100 the value's
+// big-endian bytes sit one byte before its little-endian ones, so a check that counted both would
+// find it twice, once in the order the text is not in. The value alone, one byte into the place and
+// ending it, is one hit in its order too.
+//
+// What it costs when this fails: a value a program writes as UTF-16 text is two lines, one of them
+// naming the wrong byte order.
+func TestAValueInUTF16TextIsOneHitInItsByteOrder(t *testing.T) {
+	t.Parallel()
+	const read = 8
+	rec := newRecorder(t)
+	var s *Set
+	if rec.do(func() { s = New(rec, "token") }) {
+		t.Fatalf("planting: %s", rec.said())
+	}
+	s.chunk = read
+	v := s.Get("token")
+	for _, order := range []struct {
+		encoding string
+		bo       binary.AppendByteOrder
+	}{{UTF16LE, binary.LittleEndian}, {UTF16BE, binary.BigEndian}} {
+		for at := range 2 * read {
+			before := lead + strings.Repeat("-", at)
+			var text []byte
+			for _, u := range utf16.Encode([]rune(before + v + "\n")) {
+				text = order.bo.AppendUint16(text, u)
+			}
+			got := s.Reader("log", bytes.NewReader(text))
+			sameHits(t, fmt.Sprintf("%s after %d characters", order.encoding, len(before)), got, []Hit{{Name: "token", Check: CheckReader, Place: "log", Offset: int64(2 * len(before)), Encoding: order.encoding, Count: 1}})
+		}
+		alone := []byte("x")
+		for _, u := range utf16.Encode([]rune(v)) {
+			alone = order.bo.AppendUint16(alone, u)
+		}
+		sameHits(t, order.encoding+" alone at byte 1", s.Bytes("out", alone), []Hit{{Name: "token", Check: CheckBytes, Place: "out", Offset: 1, Encoding: order.encoding, Count: 1}})
 	}
 }
 
