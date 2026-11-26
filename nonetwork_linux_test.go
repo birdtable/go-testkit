@@ -3,6 +3,10 @@
 package testkit
 
 import (
+	"io/fs"
+	"net"
+	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -12,10 +16,22 @@ import (
 const (
 	refusalLoopback = "loopback" // an interface there is none of, so the root cannot bring it up
 	refusalSameNet  = "samenet"  // a user namespace with no network namespace: a weakened guard
+	refusalUpLink   = "uplink"   // an interface up and not loopback beside the namespace's own
+	refusalNoLink   = "nolink"   // the tests' link to their network namespace cannot be read
+	seamDownTunnel  = "tunnel"   // a tunnel interface that is down, as a host's modules leave one: no refusal
+)
+
+// upLink and downTunnel are the interfaces refusalUpLink and seamDownTunnel add to wayOut's.
+const (
+	upLink     = "testkit-up0"
+	downTunnel = "tunl0"
 )
 
 // missingLink is the interface refusalLoopback brings up, which no namespace has.
 const missingLink = "testkit-none0"
+
+// missingNetLink is the link refusalNoLink has the tests read, which names no namespace.
+const missingNetLink = "/proc/self/ns/testkit-none"
 
 // forceRefusal makes this process's guard fail as refusal says, by the seams of nonetwork_linux.go,
 // each of which can only make it fail.
@@ -25,6 +41,12 @@ func forceRefusal(refusal string) {
 		loopbackName = missingLink
 	case refusalSameNet:
 		guardCloneflags = syscall.CLONE_NEWUSER
+	case refusalUpLink:
+		extraInterfaces = []net.Interface{{Index: 1000, Name: upLink, Flags: net.FlagUp | net.FlagRunning}}
+	case refusalNoLink:
+		runNetLink = missingNetLink
+	case seamDownTunnel:
+		extraInterfaces = []net.Interface{{Index: 1000, Name: downTunnel, Flags: 0}}
 	default:
 		guardCloneflags = syscall.CLONE_THREAD // a flag no clone takes alone: the system refuses it, as it does a user namespace it will not make
 	}
@@ -40,6 +62,10 @@ func refusalWords(refusal string) []string {
 		return []string{"loopback could not be brought up in the new network namespace", missingLink}
 	case refusalSameNet:
 		return []string{"the new network namespace is the one the run started in"}
+	case refusalUpLink:
+		return []string{"an interface that is not loopback is up in the guard's network namespace: " + upLink}
+	case refusalNoLink:
+		return []string{"the network namespace the tests run in cannot be read", missingNetLink}
 	}
 	return []string{"the system refused the namespace"}
 }
@@ -104,5 +130,82 @@ func TestOnLinuxAGoLookupUnderNoNetworkFailsAndTheCallersGODEBUGIsKept(t *testin
 	lookupFails(t, on)
 	if want := prior + ",netdns=go"; on["godebug"] != want {
 		t.Errorf("under the guard GODEBUG is %q, want the caller's then netdns=go: %q", on["godebug"], want)
+	}
+}
+
+// Planted failure: a check that counts an interface that is down as a way out takes the guard's own
+// namespace, where a host's modules leave tunl0 and sit0 down, for the run's, and nests without end;
+// one that skips the check runs the tests beside a way out. Risk: none past the guard's own.
+func TestATunnelInterfaceThatIsDownLetsTheGuardedRunPass(t *testing.T) {
+	t.Parallel()
+	addr := guardedAddr(t)
+	code, on, stderr := runGuard(t, nil, modeOn, addr, seamDownTunnel)
+	if _, ran := on["ran"]; code != 0 || !ran {
+		t.Fatalf("a guarded run beside a %s that is down ended %d, ran %v, Main's error %q\n%v\n%s", downTunnel, code, ran, on["main error"], on, stderr)
+	}
+	if v := on["dial"]; v == "ok" || !strings.Contains(v, addr) {
+		t.Errorf("beside a %s that is down the guarded dial of %s gave %q, want the guard's error naming it", downTunnel, addr, v)
+	}
+}
+
+// Planted failure: a run in another network namespace that sees an interface up and not loopback, and
+// starts the namespaces again, nests without end or runs beside it; one that says nothing of it leaves
+// the interface unnamed. Risk: none past the guard's own.
+func TestAnInterfaceUpBesideTheGuardsLoopbackRefusesNamingIt(t *testing.T) {
+	t.Parallel()
+	refused(t, refusalUpLink)
+}
+
+// Planted failure: a refusal that says nothing of the order leaves a uid 0 caller that put contain's
+// containment first with "operation not permitted" alone; one that names the order outside contain's
+// containment sends a caller in a container under its default seccomp profile, which refuses a new user
+// namespace with EPERM, after an option it never passed; one that says either to a caller that is not
+// uid 0 misleads those whose host refuses the namespace. Risk: none; the wording is read, and CI runs
+// as no uid 0.
+func TestAsUID0ARefusedNamespaceSaysToPutNoNetworkFirst(t *testing.T) {
+	t.Parallel()
+	const order, seccomp = "put NoNetwork before contain.Contain in Main's options", "a container's seccomp profile that refuses a new user namespace"
+	denied := &fs.PathError{Op: "fork/exec", Path: "/the/test.binary", Err: syscall.EPERM}
+	invalid := &fs.PathError{Op: "fork/exec", Path: "/the/test.binary", Err: syscall.EINVAL}
+	for _, tc := range []struct {
+		err       error
+		uid       int
+		contained bool
+		says      string
+	}{
+		{denied, 0, true, order}, {denied, 0, false, seccomp},
+		{denied, 1000, true, ""}, {denied, 1000, false, ""}, {invalid, 0, true, ""}, {invalid, 0, false, ""},
+	} {
+		why := namespaceRefused(tc.err, tc.uid, tc.contained)
+		if !strings.Contains(why, "the system refused the namespace: "+tc.err.Error()) {
+			t.Errorf("the refusal of %v as uid %d says %q; want the system's error", tc.err, tc.uid, why)
+		}
+		for _, advice := range []string{order, seccomp} {
+			if strings.Contains(why, advice) != (advice == tc.says) {
+				t.Errorf("the refusal of %v as uid %d, contained %v, says %q; want %q said: %v", tc.err, tc.uid, tc.contained, why, advice, advice == tc.says)
+			}
+		}
+	}
+}
+
+// Planted failure: tests that cannot read which network namespace they run in, and start the
+// namespaces again, nest without end; ones that run on unchecked may run beside a way out; a refusal
+// that does not name the link leaves the caller to guess. Risk: none past the guard's own.
+func TestAnUnreadableNetworkNamespaceLinkRefusesTheGuard(t *testing.T) {
+	t.Parallel()
+	refused(t, refusalNoLink)
+}
+
+// Planted failure: a containedVar that drifts from contain's containVar leaves a uid 0 caller that put
+// contain first told of a seccomp profile, and the order unsaid. Risk: none; a file of the repository
+// is read.
+func TestTheContainMarkerNoNetworkReadsIsContainsOwn(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("contain/contain.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "const containVar = " + strconv.Quote(containedVar) + "\n"; !strings.Contains(string(b), want) {
+		t.Errorf("contain/contain.go does not hold %q: NoNetwork's containedVar is not contain's marker", want)
 	}
 }

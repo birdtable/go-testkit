@@ -146,6 +146,7 @@ type conf struct {
 	rerunEnv []func() []string                                       // what a Rerun's child is given beside Clean's (RerunEnv)
 
 	offline bool // the settings of offline win over the run's, a Keep and a Drop (GoOffline)
+	guard   bool // a NoNetwork is among the options, whose guard only Main's Before sets, so Isolate refuses it
 }
 
 // GoOffline makes every go a test starts run with no network: no module proxy, no direct
@@ -385,10 +386,17 @@ func run(m interface{ Run() int }, start []string, opts []Option) (int, error) {
 // and its links not resolved, and so is each folder set beneath it, t.TempDir and os.TempDir among
 // them: on macOS a path under /var/folders, where a path read back by filepath.EvalSymlinks or
 // os.Getwd is under /private/var/folders, as /var is a link. A test that compares the two resolves
-// its own with filepath.EvalSymlinks first.
+// its own with filepath.EvalSymlinks first. Isolate runs no Before, so options that hold a NoNetwork
+// are its error, and it changes nothing: the tests would otherwise run with the network open.
 func Isolate(opts ...Option) (restore func() error, err error) {
+	if confOf(opts).guard {
+		return nil, errIsolateGuard
+	}
 	return isolate(os.Environ(), opts)
 }
+
+// errIsolateGuard is Isolate's refusal of options that hold a NoNetwork.
+var errIsolateGuard = errors.New("NoNetwork is an option of Main: Isolate runs no Before, so it would set no guard and the tests would run with the network open")
 
 // isolate is Isolate from start, the environment the process is taken to have started in, which
 // in Isolate is its own. It sets active to the conf the options build only once the environment is
@@ -413,7 +421,11 @@ func isolate(start []string, opts []Option) (func() error, error) {
 	for i, k := range goDirs() {
 		set[k] = dirs[i]
 	}
-	if err := replace(keptOf(start, c), set); err != nil {
+	keep := keptOf(start, c)
+	if c.guard {
+		keep = append(withoutGuardVar(keep), guardRerunEnv()...) // the guard's marker, set once its probe passed
+	}
+	if err := replace(keep, set); err != nil {
 		return nil, errors.Join(err, replace(before, nil), os.RemoveAll(own))
 	}
 	config, err := os.UserConfigDir()

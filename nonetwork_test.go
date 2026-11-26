@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -28,6 +29,14 @@ const plain = "plain"
 // print the result, as a program a test starts would: dialChild.
 const dialWord = "testkit-dial"
 
+// guardedRole, set, makes TestMain run the tests under NoNetwork, and names the part this test binary
+// plays in a test of a start of it inside the guard: guardedFuzz, guardedParent or guardedChild. Its
+// child is given guardedURL too, the address of its parent's listener.
+const (
+	guardedRole = "TESTKIT_TEST_GUARDED"
+	guardedURL  = "TESTKIT_TEST_URL"
+)
+
 // The modes of guardChild.
 const (
 	modeOn       = "on"        // NoNetwork: every result, a child's and a nested run's too
@@ -44,6 +53,9 @@ func guardChild(mode, addr, refusal string) int {
 	var opts []Option
 	switch mode {
 	case modeOn, modeInner:
+		if refusal != plain {
+			forceRefusal(refusal) // a seam the guard must hold through, as a host gives it
+		}
 		opts = append(opts, NoNetwork())
 	case modeRefused:
 		forceRefusal(refusal)
@@ -241,7 +253,7 @@ func TestNoNetworkNamingTheSystemRunsTheTestsUnguardedAndSaysSo(t *testing.T) {
 // Planted failure: a name taken unchecked lets "macos" through. Risk: none.
 func TestNoNetworkRefusesANameThatIsNoGOOS(t *testing.T) {
 	t.Parallel()
-	code, done, err := noNetwork(nil, []string{"linux", "macos"})
+	code, done, err := noNetwork(nil, []string{"linux", "macos"}, guardHere)
 	if !done || code != 1 || err == nil || !strings.Contains(err.Error(), `"macos", which is no GOOS`) {
 		t.Fatalf("NoNetwork(\"linux\", \"macos\") gave %d, %v, %v; want the run refused, naming macos", code, done, err)
 	}
@@ -259,5 +271,42 @@ func TestTheProbeFailsAGuardThatHoldsNothing(t *testing.T) {
 	closed := "127.0.0.1:" + freePort(t)
 	if why := probe(closed, probeRefusal); !strings.Contains(why, "but not with the guard's") {
 		t.Errorf("a probe whose connection was refused by no guard says %q", why)
+	}
+}
+
+// Planted failure: an Isolate that takes NoNetwork as any other option isolates the tests and sets no
+// guard, so they run with the network open and nothing says so. Risk: none; the refusal changes nothing.
+func TestIsolateGivenNoNetworkReturnsAnErrorAndChangesNothing(t *testing.T) {
+	t.Parallel()
+	home := os.Getenv("HOME")
+	for _, opts := range [][]Option{{NoNetwork()}, {Keep("GOWORK"), Options(NoNetwork(hostOS()))}} {
+		restore, err := Isolate(opts...)
+		if err == nil || restore != nil || !strings.Contains(err.Error(), "NoNetwork is an option of Main") {
+			if restore != nil {
+				_ = restore()
+			}
+			t.Fatalf("Isolate given NoNetwork returned %v, want no restore and the error naming Main", err)
+		}
+	}
+	if got := os.Getenv("HOME"); got != home {
+		t.Errorf("a refused Isolate moved HOME from %q to %q", home, got)
+	}
+}
+
+// Planted failure: a Before that passes on done as the guard's step said lets Main run the tests past an
+// error with done false, unguarded, even where the caller named no system. Risk: none; the step is the
+// test's own, and no guard is set.
+func TestAGuardStepThatErrsWithDoneFalseEndsTheRun(t *testing.T) {
+	t.Parallel()
+	stepErr := errors.New("the step failed before it set the guard")
+	for _, tc := range []struct {
+		code, want int
+		unguarded  []string
+	}{{0, 1, nil}, {0, 1, []string{hostOS()}}, {5, 5, nil}} {
+		step := func([]string) (int, bool, string, error) { return tc.code, false, "", stepErr }
+		code, done, err := noNetwork(nil, tc.unguarded, step)
+		if !done || code != tc.want || !errors.Is(err, stepErr) {
+			t.Errorf("a step that ended %d with done false and an error gave %d, %v, %v; want %d, done and its error (unguarded %v)", tc.code, code, done, err, tc.want, tc.unguarded)
+		}
 	}
 }

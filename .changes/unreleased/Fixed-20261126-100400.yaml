@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'NoNetwork on Linux keeps the guard''s marker in the tests'' environment once the probe passes, so a fuzz worker, or a helper child a test starts as the test binary with its environment, stays inside the guard: a fuzz target under NoNetwork failed, and a helper child made a network namespace of its own, away from its parent''s listener.'
+time: 2026-11-26T10:04:00.000000+01:00

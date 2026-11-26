@@ -93,7 +93,11 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("GOWORK", "off"); err != nil {
 		panic(err)
 	}
-	code, err := Main(m, Keep("GOWORK"))
+	opts := []Option{Keep("GOWORK")}
+	if os.Getenv(guardedRole) != "" {
+		opts = append(opts, Keep(guardedRole, guardedURL), NoNetwork())
+	}
+	code, err := Main(m, opts...)
 	if err != nil {
 		panic(err)
 	}

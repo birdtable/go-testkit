@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'Isolate given NoNetwork returns an error and changes nothing: Isolate runs no Before, so it set no guard and the tests ran with the network open.'
+time: 2026-11-26T10:01:00.000000+01:00
