@@ -429,7 +429,7 @@ func TestFilesFailsOnWhatItCannotRead(t *testing.T) {
 	write(filepath.Join(dir, "locked"))
 	unreadable(t, filepath.Join(dir, "locked"))
 	sameHits(t, "the folder with a file it cannot read", s.Files(dir), []Hit{{Name: "token", Check: CheckFiles, Place: "seen", Encoding: Raw, Count: 1}})
-	if said := rec.said(); !strings.Contains(said, `canary: Files cannot read "locked" under "`+dir+`"`) {
+	if said := rec.said(); !strings.Contains(said, fmt.Sprintf("canary: Files cannot read %q under %q", "locked", dir)) {
 		t.Errorf("Files of a folder with a file it cannot read said %q, want the file named", said)
 	}
 
