@@ -13,13 +13,17 @@
 //     line led by the system and a tab, equals api/systems.txt less its # lines. The full report, not
 //     -incompatible: a name added on one system is "compatible".
 //  2. The breaks since the last tag. The base is the last tag git describe finds that matches v*, or
-//     <folder>/v* for a module in a folder of its own. Its tree is written out of the repository by
-//     git checkout-index, through an index of the gate's own, and read at the module's folder with
-//     GOWORK=off. apidiff -incompatible from the base's export data to the head's, per system, the
-//     three joined, sorted bytewise and each line once, equals api/breaks/<version>.txt byte for byte
-//     (the base's version alone in the name), or nothing where that file is not there. So a break with
-//     no line is red, and so is a line for a break the tree does not make. At a new tag the base moves,
-//     no file is there for it, and the same tree is green with nothing edited.
+//     <folder>/v* for a module in a folder of its own. With -before-head, for a gate that runs at the
+//     tag, the base leaves out the tags on the head: it is the newest such tag that is an ancestor of
+//     the head and does not point at it, the run at v0.2.0 holding the breaks since v0.1.0, and a
+//     head whose only tags are its own has none, as with no tag. The base's tree is written out of the
+//     repository by git checkout-index, through an index of the gate's own, and read at the module's
+//     folder with GOWORK=off. apidiff -incompatible from the base's export data to the head's, per
+//     system, the three joined, sorted bytewise and each line once, equals api/breaks/<version>.txt
+//     byte for byte (the base's version alone in the name), or nothing where that file is not there.
+//     So a break with no line is red, and so is a line for a break the tree does not make. Without
+//     -before-head, at a new tag the base moves, no file is there for it, and the same tree is green
+//     with nothing edited.
 //  3. The marks. A name api/marks.txt does not list is experimental. Each line it holds is
 //     <package><tab><name><tab><mark>, the mark a word that is not experimental, and go doc must find
 //     the name in the package and print no line holding Experimental, which the name's doc would then
@@ -36,8 +40,8 @@
 //
 // It is built on apidiff and git describe, and adds what neither does alone: one gate for the three
 // systems from one host, held to files in the repository. The repository configures it by
-// api/systems.txt, api/breaks/<version>.txt and api/marks.txt, and by -dir for a module in a folder
-// of its own.
+// api/systems.txt, api/breaks/<version>.txt and api/marks.txt, by -dir for a module in a folder
+// of its own, and by -before-head for a gate that runs at its own tag.
 package main
 
 import (
@@ -52,6 +56,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -71,16 +76,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	set := flag.NewFlagSet("apigate", flag.ContinueOnError)
 	set.SetOutput(stderr)
 	dir := set.String("dir", ".", "the module's `folder`: the repository's top, or a folder below it with a go.mod of its own, whose tags are <folder>/v*")
+	beforeHead := set.Bool("before-head", false, "leave the head's own tags out of check 2's base, for a gate that runs at the tag: the base is the newest tag that is an ancestor of the head and does not point at it")
 	if err := set.Parse(args); err != nil {
 		return 2
 	}
 	if set.NArg() != 0 {
-		if _, err := fmt.Fprintf(stderr, "apigate: takes no arguments but -dir, and was given %q\n", set.Args()); err != nil {
+		if _, err := fmt.Fprintf(stderr, "apigate: takes no arguments but -dir and -before-head, and was given %q\n", set.Args()); err != nil {
 			return 2
 		}
 		return 2
 	}
-	g := &gate{ctx: ctx, out: stdout, errOut: stderr, dir: *dir}
+	g := &gate{ctx: ctx, out: stdout, errOut: stderr, dir: *dir, beforeHead: *beforeHead}
 	red, err := g.run()
 	if err != nil || red || g.werr != nil {
 		return 1
@@ -100,6 +106,8 @@ type gate struct {
 	folder string // the module's folder below top, slash-separated and ending in /, or "" at the top
 	bin    string // apidiff
 	tmp    string // the gate's own folder, removed when it ends
+
+	beforeHead bool // check 2's base leaves out the tags on the head
 }
 
 // say writes one line of the gate's.
@@ -293,21 +301,10 @@ func (g *gate) breaks() (bool, error) {
 		g.say("api: this clone is shallow, so its last tag is not known; fetch the whole history")
 		return true, nil
 	}
-	tags := g.folder + "v*"
-	var e bytes.Buffer
-	c = g.command(g.dir, nil, "git", "describe", "--tags", "--abbrev=0", "--match", tags)
-	c.Stderr = &e
-	b, err := c.Output()
-	if err != nil {
-		if bytes.Contains(e.Bytes(), []byte("No names found")) || bytes.Contains(e.Bytes(), []byte("No tags can describe")) {
-			g.say("api: no tag yet, so no break is held; the systems and the marks are")
-			return false, nil
-		}
-		g.write(e.Bytes())
-		g.say("api: git describe could not read the %s tags, so the breaks cannot be held", tags)
-		return false, errStop
+	base, err := g.base()
+	if err != nil || base == "" {
+		return false, err
 	}
-	base := strings.TrimSpace(string(b))
 	if !g.writeBase(base) {
 		return false, errStop
 	}
@@ -353,6 +350,90 @@ func (g *gate) breaks() (bool, error) {
 	g.diff(wantPath, g.path("breaks.got"))
 	g.say("api: the breaks since %s are not %s (- the file, + apidiff); a commit that removes or changes an exported name adds apidiff's line there", base, declared)
 	return true, nil
+}
+
+// base is check 2's base: the last tag git describe finds from the head that matches the module's
+// tags, or with -before-head the newest of those that git describe finds from the head's parents,
+// newest being fewest commits from it to the head. A tag that points at the head is no parent's
+// ancestor, so the head's own tags are left out with no list of them. base is "" where there is no
+// such tag, the line that says so said; err is errStop where git could not tell, its reason said.
+func (g *gate) base() (string, error) {
+	tags := g.folder + "v*"
+	if !g.beforeHead {
+		base, ok := g.describe(tags, "HEAD")
+		if ok && base == "" {
+			g.say("api: no tag yet, so no break is held; the systems and the marks are")
+		}
+		return base, stopUnless(ok)
+	}
+	c := g.command(g.dir, nil, "git", "rev-parse", "HEAD^@")
+	c.Stderr = g.errOut
+	b, err := c.Output()
+	if err != nil {
+		g.say("api: git cannot read the head's parents, so the breaks cannot be held")
+		return "", errStop
+	}
+	base, nearest := "", -1
+	for parent := range strings.FieldsSeq(string(b)) {
+		tag, ok := g.describe(tags, parent)
+		if !ok {
+			return "", errStop
+		}
+		if tag == "" || tag == base {
+			continue
+		}
+		n, ok := g.commitsSince(tag)
+		if !ok {
+			return "", errStop
+		}
+		if nearest < 0 || n < nearest {
+			base, nearest = tag, n
+		}
+	}
+	if base == "" {
+		g.say("api: no %s tag before the head's own, so no break is held; the systems and the marks are", tags)
+	}
+	return base, nil
+}
+
+// stopUnless is errStop unless ok.
+func stopUnless(ok bool) error {
+	if ok {
+		return nil
+	}
+	return errStop
+}
+
+// describe is the last tag matching tags that git describe finds from the commit at, or "" where git
+// answers that there is none. ok is false where git fails otherwise, its error output and a line
+// said.
+func (g *gate) describe(tags, at string) (tag string, ok bool) {
+	var e bytes.Buffer
+	c := g.command(g.dir, nil, "git", "describe", "--tags", "--abbrev=0", "--match", tags, at)
+	c.Stderr = &e
+	b, err := c.Output()
+	if err == nil {
+		return strings.TrimSpace(string(b)), true
+	}
+	if bytes.Contains(e.Bytes(), []byte("No names found")) || bytes.Contains(e.Bytes(), []byte("No tags can describe")) {
+		return "", true
+	}
+	g.write(e.Bytes())
+	g.say("api: git describe could not read the %s tags, so the breaks cannot be held", tags)
+	return "", false
+}
+
+// commitsSince is how many commits the head has that the tag does not.
+func (g *gate) commitsSince(tag string) (int, bool) {
+	c := g.command(g.dir, nil, "git", "rev-list", "--count", tag+"..HEAD")
+	c.Stderr = g.errOut
+	b, err := c.Output()
+	n, convErr := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || convErr != nil {
+		g.say("api: git cannot count the commits since %s, so the breaks cannot be held", tag)
+		return 0, false
+	}
+	return n, true
 }
 
 // writeBase writes the tree of the tag base into the gate's folder old, through an index of the gate's
