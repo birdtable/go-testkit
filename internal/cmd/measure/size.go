@@ -52,12 +52,13 @@ import (
 // withGoResolver appends netdns=go to the rerun's GODEBUG, keeping the caller's settings (17), and
 // nonetwork.go's doc says so and narrows the limit to programs that are not Go (2).
 //
-// Raised by 132 to 6124, by measure, for BuildAt reading the old tree raw, from the second review
-// of v0.4.0: buildat.go is 315, up from 183. git archive and its tar reader give way to git ls-tree
+// Raised by 136 to 6128, by measure, for BuildAt reading the old tree raw, from the second review
+// of v0.4.0: buildat.go is 319, up from 183. git archive and its tar reader give way to git ls-tree
 // -r -z, its parser, and git cat-file --batch, streamed through an os.Root, so no filter or attribute
 // of the repository applies; every git call is given GIT_NO_LAZY_FETCH=1, and a tree a partial clone
-// lacks is refused, saying so; and the doc says what the tree holds and which git the promise needs.
-const Ceiling = 6124
+// lacks is refused, saying so, and only a missing object is said so; and the doc says what the tree
+// holds and which git the promise needs.
+const Ceiling = 6128
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

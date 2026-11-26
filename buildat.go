@@ -181,8 +181,11 @@ func unpack(at source, into string) (err error) {
 	if err := cmd.Wait(); err != nil {
 		return errors.Join(werr, fmt.Errorf("git cat-file: %w: %s", err, strings.TrimSpace(stderr.String())))
 	}
+	if errors.Is(werr, errMissing) {
+		return lacking(at, werr) // only a missing object is said as a partial clone's; a refusal stays what it is
+	}
 	if werr != nil {
-		return lacking(at, werr)
+		return werr
 	}
 	return serr
 }
@@ -293,8 +296,9 @@ func blobHeader(e entry, br *bufio.Reader) (int64, error) {
 	return size, nil
 }
 
-// lacking is err, a read of at's tree that failed, said as what it is where the repository is a
-// partial clone: one that lacks the tree, which BuildAt does not fetch.
+// lacking is err, git ls-tree failing or git cat-file answering an object missing, said as what it is
+// where the repository is a partial clone: one that lacks the tree, which BuildAt does not fetch. Any
+// other failure of the unpacking is not given to it, so a refusal is never said as a missing tree.
 func lacking(at source, err error) error {
 	promisors, cerr := gitOut(at.git, at.top, "config", "--get-regexp", `^(remote\..*\.promisor|extensions\.partialclone)$`)
 	if cerr != nil || promisors == "" {

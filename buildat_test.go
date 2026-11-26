@@ -3,6 +3,7 @@ package testkit
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -409,6 +410,48 @@ func TestBuildAtInAPartialCloneFetchesNothingAndSaysTheCloneIsPartial(t *testing
 		if before[k] != after[k] {
 			t.Errorf(".git%s was %q and is %q: git fetched from the promisor remote", k, before[k], after[k])
 		}
+	}
+}
+
+// TestBuildAtInAPartialCloneSaysARefusalAsItIsAndNotAsAMissingTree: in a blobless clone that holds
+// every object of the tree it builds, a refusal of another kind is said as itself, never as the clone
+// being partial. The tree, written by git hash-object --literally, names one file twice, so the second
+// write is refused as a file that exists; its blob is fetched into the clone first. The planted red is
+// unpack giving every failure of the unpacking to lacking: the error says the clone is partial and
+// tells the person to fetch, which fixes nothing.
+//
+// What it costs when this fails: a refusal on safety, a path or link that climbs out of the build's
+// folder, reads as a missing object in a partial clone, and its advice (fetch, clone again) hides it.
+func TestBuildAtInAPartialCloneSaysARefusalAsItIsAndNotAsAMissingTree(t *testing.T) {
+	// serial: t.Chdir into the clone.
+	src := upgradeRepo(t)
+	gitIn(t, src, "config", "uploadpack.allowFilter", "true")
+	scratch := t.TempDir()
+	content := filepath.Join(scratch, "dup.txt")
+	if err := os.WriteFile(content, []byte("dup\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blob := gitIn(t, src, "hash-object", "-w", content)
+	raw, err := hex.DecodeString(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := append([]byte("100644 dup\x00"), raw...)
+	treeFile := filepath.Join(scratch, "tree")
+	if err := os.WriteFile(treeFile, append(slices.Clone(entry), entry...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tree := gitIn(t, src, "hash-object", "-t", "tree", "--literally", "-w", treeFile)
+	commit := gitIn(t, src, "commit-tree", "-p", "HEAD", "-m", "a tree that names one file twice", tree)
+	gitIn(t, src, "tag", "dup", commit)
+	parent := t.TempDir()
+	gitIn(t, parent, "clone", "-q", "--filter=blob:none", fileURL(src), "clone")
+	clone := filepath.Join(parent, "clone")
+	gitIn(t, clone, "cat-file", "blob", blob) // fetched here, with no GIT_NO_LAZY_FETCH, so the clone holds it
+	t.Chdir(filepath.Join(clone, "app", "cmd"))
+	r := BuildAt(t, "dup", "cmd/upg").Run("version")
+	if r.Code != -1 || !strings.Contains(r.Stderr, "unpacking dup") || strings.Contains(r.Stderr, "partial") {
+		t.Errorf("a tree naming dup twice, in a blobless clone that holds it: %+v, want code -1 and the refusal of dup, not said as a partial clone", r)
 	}
 }
 
