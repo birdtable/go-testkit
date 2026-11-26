@@ -5,8 +5,8 @@
 // and its -wal and -journal files are covered with no driver; each entry of a zip archive it wrote,
 // a support bundle among them; its stdout and stderr; and the String, Error and %+v of a value it
 // returned. Files reads each file's and folder's path below the folder too, and each link's target
-// as text, and Zip each entry's name: a program that names a file or a folder after a token, or
-// points a link at it, has written it there.
+// as text, and Zip each entry's name and comment and the archive's comment: a program that names a
+// file or a folder after a token, or points a link at it, has written it there.
 //
 // Each check looks for each value as it is and re-encoded on the way out: as hex in both cases, as
 // standard and URL-safe base64 at each of the three alignments a value can have in a longer encoded
@@ -17,7 +17,8 @@
 // the value, any of its encodings, or the bytes around the hit, in a failure or a log, so a test log
 // that is kept or shared holds nothing a reader could take for the real secret's shape. A place, a
 // path or an error that holds one is shown with each run of 16 bytes or more of a value or an
-// encoding in it replaced by the value's name in angle brackets, <name>.
+// encoding in it, and each whole encoding shorter than that, replaced by the value's name in angle
+// brackets, <name>.
 //
 // What it does not see:
 //   - A value compressed or encrypted, or written in an encoding the list above does not name,
@@ -35,9 +36,11 @@
 //   - A file as it is later: a file is read as it is when it is checked, so check after the program
 //     has ended or closed its files.
 //   - Process memory, the network, and any file outside the folders a test names. Files does not
-//     follow a symbolic link, though it reads the target's text, and it does not read a FIFO, a socket
-//     or a device, which could block the test. Of a regular file it reads the bytes and the path alone: not its extended attributes
-//     (macOS, Linux), nor a Windows alternate data stream.
+//     follow a symbolic link or a Windows junction, though it reads the target's text, and it does
+//     not read a FIFO, a socket or a device, which could block the test. Of a regular file it reads the bytes and the path alone: not its extended attributes
+//     (macOS, Linux), nor a Windows alternate data stream. Of a zip archive Zip reads the entries'
+//     names, bytes and comments and the archive's comment, not the entries' extra fields or any
+//     bytes outside them, which Files reads raw.
 //
 // The package imports the standard library only.
 package canary
@@ -144,6 +147,7 @@ type Set struct {
 	values  map[string]string
 	needles []needle
 	runs    map[string][]run // each minLen bytes of a needle, at each needle and offset they are
+	short   []int            // the index in needles of each needle under minLen bytes
 	longest int
 	checked atomic.Bool
 	chunk   int // the read size, chunk but in this package's own tests, and even
@@ -214,6 +218,9 @@ func (s *Set) plant(by, name, value string) {
 	for _, n := range encodings(name, value) {
 		s.needles = append(s.needles, n)
 		s.longest = max(s.longest, len(n.b))
+		if len(n.b) < minLen {
+			s.short = append(s.short, len(s.needles)-1)
+		}
 		for at := 0; at+minLen <= len(n.b); at++ {
 			w := string(n.b[at : at+minLen])
 			s.runs[w] = append(s.runs[w], run{len(s.needles) - 1, at})
@@ -303,8 +310,10 @@ func escapeRE() *regexp.Regexp { return regexp.MustCompile(`%[0-9A-F]{2}`) }
 // file and folder, links among them, and is the hits, nil when it found none. Each hit fails the
 // test. A hit in a path is at InPath, counted at the entry whose name it ends in. A file it cannot
 // read, and a dir that is missing or no folder, fail the test too, never skipped. It does not follow
-// a symbolic link, but reads its target's text as the place "<path> (target)", and it reads no FIFO,
-// socket or device. A zip archive it reads as raw bytes, like any file: Zip reads its entries.
+// a symbolic link, but reads its target's text as the place "<path> (target)", and a Windows
+// junction's the same way. Of any other entry that is no file or folder it reads the target's text
+// if the entry has one, and nothing more than its path if not: it reads no FIFO, socket or device.
+// A zip archive it reads as raw bytes, like any file: Zip reads its entries.
 func (s *Set) Files(dir string) []Hit {
 	s.t.Helper()
 	s.begin(CheckFiles)
@@ -329,6 +338,12 @@ func (s *Set) Files(dir string) []Hit {
 		switch {
 		case d.Type()&fs.ModeSymlink != 0:
 			found, err = s.target(root, rel)
+		case d.Type()&fs.ModeIrregular != 0:
+			// A Windows junction is irregular, and its target is read as a link's is. An entry with
+			// no target to read is read as nothing more than its path.
+			if found, err = s.target(root, rel); err != nil {
+				found, err = nil, nil
+			}
 		case d.Type().IsRegular():
 			found, err = s.file(root, rel)
 		}
@@ -346,14 +361,20 @@ func (s *Set) Files(dir string) []Hit {
 // InPath, with place as its place, and reported.
 func (s *Set) inName(check, place, name string, above int) []Hit {
 	s.t.Helper()
+	hits := s.inText(check, place, name, above)
+	for i := range hits {
+		hits[i].Offset = InPath
+	}
+	s.report(hits)
+	return hits
+}
+
+// inText is the hits in text, at place, that end past its first above bytes, not yet reported.
+func (s *Set) inText(check, place, text string, above int) []Hit {
 	tl := tally{check: check, place: s.redact(place), index: map[[2]string]int{}}
 	for _, nd := range s.needles {
-		tl.find(nd, []byte(name), above)
+		tl.find(nd, []byte(text), above)
 	}
-	for i := range tl.hits {
-		tl.hits[i].Offset = InPath
-	}
-	s.report(tl.hits)
 	return tl.hits
 }
 
@@ -363,9 +384,22 @@ type span struct {
 	name     string
 }
 
-// spans is each run of minLen bytes or more of a needle in text, as long as it goes on matching.
+// spans is each run of minLen bytes or more of a needle in text, as long as it goes on matching, and
+// each whole needle under minLen bytes in text: the UTF-16 of a value of 16 bytes or more is under 16
+// bytes when most of its characters take 3 bytes in UTF-8, as six of them take 18 and 12.
 func (s *Set) spans(text string) []span {
 	var spans []span
+	for _, k := range s.short {
+		nd := s.needles[k]
+		for p := 0; ; p++ {
+			j := strings.Index(text[p:], string(nd.b))
+			if j < 0 {
+				break
+			}
+			p += j
+			spans = append(spans, span{p, p + len(nd.b), nd.name})
+		}
+	}
 	for p := 0; p+minLen <= len(text); p++ {
 		for _, r := range s.runs[text[p:p+minLen]] {
 			nd := s.needles[r.k]
@@ -417,28 +451,32 @@ func (s *Set) file(root *os.Root, rel string) ([]Hit, error) {
 // Zip checks each entry of the zip archive at path, as Files checks a file: its name, a hit there at
 // InPath, and its bytes as archive/zip reads them, Stored or Deflate, through the same chunked read
 // as Reader, so its memory is a chunk whatever an entry's size. A hit's place is path as given, !,
-// and the entry's name. It is the hits, nil when it found none, and each hit fails the test. An
-// archive archive/zip cannot open, and an entry it cannot read, a compression method it does not
-// know or a checksum that does not match among them, fail the test too, never skipped. An encrypted
-// entry's name is read and its bytes are not, as no value could be found in them. A zip archive in
-// an entry is that entry's bytes, not opened.
+// and the entry's name. It reads the archive's comment too, the place "<path> (comment)", and each
+// entry's comment, "<path>!<name> (comment)", as text, at the offset in it. It does not read an
+// entry's extra fields, nor any bytes of the file outside an entry and the comments: Files on the
+// archive's folder reads those, raw. It is the hits, nil when it found none, and each hit fails the
+// test. An archive archive/zip cannot open, an entry name it refuses as insecure among them, and an
+// entry it cannot read, a compression method it does not know, a checksum that does not match or
+// bytes that end before its header says among them, fail the test too, never skipped. An encrypted
+// entry's name and comment are read and its bytes are not, as no value could be found in them. A zip
+// archive in an entry is that entry's bytes, not opened.
 func (s *Set) Zip(path string) []Hit {
 	s.t.Helper()
 	s.begin(CheckZip)
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		s.errorf("canary: Zip cannot open the archive %q: %v", path, err)
+		if r != nil { // archive/zip hands back an open reader with zip.ErrInsecurePath
+			s.close(path, r)
+		}
 		return nil
 	}
-	defer func() {
-		if err := r.Close(); err != nil {
-			s.errorf("canary: Zip cannot close the archive %q: %v", path, err)
-		}
-	}()
-	var hits []Hit
+	defer s.close(path, r)
+	hits := s.comment(path+" (comment)", r.Comment)
 	for _, f := range r.File {
 		place := path + "!" + f.Name
 		hits = append(hits, s.inName(CheckZip, place, f.Name, 0)...)
+		hits = append(hits, s.comment(place+" (comment)", f.Comment)...)
 		if f.Flags&encrypted != 0 {
 			continue
 		}
@@ -448,6 +486,22 @@ func (s *Set) Zip(path string) []Hit {
 		}
 		hits = append(hits, found...)
 	}
+	return hits
+}
+
+// close closes the archive at path that Zip opened, and fails the test if it cannot.
+func (s *Set) close(path string, r *zip.ReadCloser) {
+	s.t.Helper()
+	if err := r.Close(); err != nil {
+		s.errorf("canary: Zip cannot close the archive %q: %v", path, err)
+	}
+}
+
+// comment is the hits in a zip comment, at place and the offset in it, reported as Zip found them.
+func (s *Set) comment(place, text string) []Hit {
+	s.t.Helper()
+	hits := s.inText(CheckZip, place, text, 0)
+	s.report(hits)
 	return hits
 }
 
@@ -512,7 +566,8 @@ func (s *Set) Value(place string, v any) []Hit {
 // scan reads r a chunk at a time, each chunk after the last longest bytes of the one before so a
 // needle across two chunks is found with the byte before it, and is the hits, one per name and
 // encoding, each reported. An occurrence is counted in the chunk where it ends, so one in the kept
-// tail is not counted twice.
+// tail is not counted twice. It ends cleanly on io.EOF alone: any other error r gives, a short read r
+// reports as io.ErrUnexpectedEOF among them, is its error.
 func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 	s.t.Helper()
 	tail := s.longest
@@ -520,12 +575,12 @@ func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 	kept := 0
 	tl := tally{check: check, place: s.redact(place), index: map[[2]string]int{}}
 	for {
-		n, err := io.ReadFull(r, buf[kept:kept+s.chunk])
+		n, err := fill(r, buf[kept:kept+s.chunk])
 		data := buf[:kept+n]
 		for _, nd := range s.needles {
 			tl.find(nd, data, kept)
 		}
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -539,6 +594,21 @@ func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 	}
 	s.report(tl.hits)
 	return tl.hits, nil
+}
+
+// fill reads r into b until b is full or r gives an error, and is the count and r's own error. Where
+// io.ReadFull turns an end inside b into io.ErrUnexpectedEOF, and so would hide the one archive/zip
+// gives for an entry shorter than its header says, fill gives io.EOF only when r said io.EOF.
+func fill(r io.Reader, b []byte) (int, error) {
+	n := 0
+	for n < len(b) {
+		m, err := r.Read(b[n:])
+		n += m
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 // tally is the hits of one place so far: one per name and encoding, with its first offset and count.
@@ -605,7 +675,8 @@ func (s *Set) begin(check string) {
 }
 
 // errorf fails the test with a line that holds no planted value: each string in args, and the line
-// made of them, with every run of minLen bytes of a value or an encoding in it redacted. The strings are redacted before the
+// made of them, with every run of minLen bytes of a value or an encoding in it, and every whole
+// encoding under minLen bytes, redacted. The strings are redacted before the
 // line is made, so a %q that escapes a value's bytes cannot spell them out; an error is shown by %v,
 // which does not escape, so the line's own redaction covers it.
 func (s *Set) errorf(format string, args ...any) {
@@ -634,7 +705,8 @@ func (s *Set) line(format string, args []any) string {
 // redact is text with each run of minLen bytes or more of a needle in it replaced by <name>, the
 // name of its value. Where two runs overlap, the longer is named over its length and the other over
 // what is left of it, so a value that runs on into another is <a><b>, and no minLen bytes of either
-// stay. Every needle is minLen bytes or more, so a whole needle is one run.
+// stay. A needle of minLen bytes or more is one run where it is whole, and a needle under minLen
+// bytes, which no run is drawn from, is replaced where it is whole.
 func (s *Set) redact(text string) string {
 	spans := s.spans(text)
 	if spans == nil {

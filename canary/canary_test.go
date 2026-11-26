@@ -496,6 +496,39 @@ func TestNoLineHoldsARunOfAValueThatIsNoWholeNeedle(t *testing.T) {
 	}
 }
 
+// TestAnEncodingUnder16BytesIsShownAsTheNameWhole: a value Own plants of six characters of 3 bytes
+// each, 18 bytes whose UTF-16 is 12, under the 16 a run takes, written little endian in a zip entry's
+// name, is a hit whose place shows those 12 bytes as <key>, and no line holds them.
+//
+// What it costs when this fails: a test log prints a planted value whole, in UTF-16, as v0.6.0 did
+// not, as no run of 16 bytes is drawn from an encoding shorter than that.
+func TestAnEncodingUnder16BytesIsShownAsTheNameWhole(t *testing.T) {
+	t.Parallel()
+	const value = "日本語の文字"
+	rec := newRecorder(t)
+	var s *Set
+	if rec.do(func() { s = New(rec); s.Own("key", value) }) {
+		t.Fatalf("planting: %s", rec.said())
+	}
+	var le []byte
+	for _, u := range utf16.Encode([]rune(value)) {
+		le = binary.LittleEndian.AppendUint16(le, u)
+	}
+	if len(value) != 18 || len(le) != 12 {
+		t.Fatalf("the value is %d bytes and its UTF-16 %d, want 18 and 12", len(value), len(le))
+	}
+	path := writeZip(t, []zipEntry{{name: "logs/" + string(le) + ".bin", method: zip.Store, body: "a line\n"}})
+	place := path + "!logs/<key>.bin"
+	sameHits(t, "an entry named with the value's UTF-16", s.Zip(path), []Hit{{Name: "key", Check: CheckZip, Place: place, Offset: InPath, Encoding: UTF16LE, Count: 1}})
+	said := rec.said()
+	if want := fmt.Sprintf("canary: the planted %q is in the path %q (Zip), as utf16le, once", "key", place); !strings.Contains(said, want) {
+		t.Errorf("Zip said %q, want %q", said, want)
+	}
+	if strings.Contains(said, string(le)) {
+		t.Errorf("Zip said %q, which holds the value's UTF-16", said)
+	}
+}
+
 // TestTheQuarterRuleRefusesARandomHexKeyAsOftenAsOwnsDocSays: of 100,000 keys of 16 random bytes
 // written as 32 hex characters, the rules Own applies (plain) refuse within four standard deviations
 // of the count the exact chance of one digit being over a quarter predicts, and that chance is the

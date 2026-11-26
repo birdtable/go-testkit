@@ -155,7 +155,18 @@ import (
 // skip of a run that started a byte before is the one line not needed for the answer, and it keeps
 // a long match from being walked once for each of its bytes, so it stays. Finding the runs is a
 // function of its own, spans, to keep redact under the linter's bound on complexity.
-const Ceiling = 7447
+//
+// Raised by 72 to 7519, by measure, for v0.7.0's second review (canary.go, 72): fill, which reads a
+// chunk and keeps the reader's own error, so scan ends cleanly on io.EOF alone and a short read
+// fails (16); spans takes each whole needle under 16 bytes, the UTF-16 of a value of 3-byte
+// characters, through a list of them made as a value is planted (20); Zip reads the archive's
+// comment and each entry's through comment, and inName's search is inText, shared with it (21);
+// Files reads the target of an irregular entry, a Windows junction, and reads nothing more where
+// it has none (8); and Zip closes the reader archive/zip hands back with an error, through close,
+// shared with the deferred close (7). Each count holds its docs. Read for removable code: fill is
+// the loop io.ReadFull runs, without the change of error; a comment goes through the tally in place
+// of scan, whose error a strings.Reader never gives and which would need a lint directive to drop.
+const Ceiling = 7519
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
