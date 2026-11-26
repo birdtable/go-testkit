@@ -21,16 +21,6 @@ import (
 // probeRefusal is the error a connect gets in a network namespace where only loopback is up: no route.
 const probeRefusal = syscall.ENETUNREACH
 
-// guardVar carries the part of the guard a process is, from the process that made the namespaces to the
-// one it starts. It is testkit's own, never a name a caller sets: Isolate keeps it from the tests, and
-// RerunEnv hands it to a child of Rerun. Its value is "init:<uid>:<gid>:<net>" for the root of the new
-// namespaces, or "run:<net>" for the tests, net being the link of the network namespace the run started
-// in (/proc/self/ns/net, "net:[<inode>]"). A stray value never opens the network: a run is guarded only
-// in a network namespace other than that one where every interface that is up is loopback, and only once
-// the probe passes there; a run in another namespace where one is up that is not loopback refuses, naming
-// it, and never starts the namespaces again; any other run starts the namespaces itself.
-const guardVar = "TESTKIT_NONETWORK"
-
 // The parts guardVar names.
 const (
 	guardInit = "init" // root of the new user and network namespace: brings loopback up and starts the tests
@@ -258,17 +248,6 @@ func wayOut() string {
 		}
 	}
 	return ""
-}
-
-// withoutGuardVar is environ with guardVar left out.
-func withoutGuardVar(environ []string) []string {
-	out := make([]string, 0, len(environ))
-	for _, kv := range environ {
-		if !strings.HasPrefix(kv, guardVar+"=") {
-			out = append(out, kv)
-		}
-	}
-	return out
 }
 
 // withGoResolver is environ with netdns=go after the GODEBUG settings it has, which it keeps, as the last

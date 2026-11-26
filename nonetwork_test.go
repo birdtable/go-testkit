@@ -29,6 +29,14 @@ const plain = "plain"
 // print the result, as a program a test starts would: dialChild.
 const dialWord = "testkit-dial"
 
+// guardedRole, set, makes TestMain run the tests under NoNetwork, and names the part this test binary
+// plays in a test of a start of it inside the guard: guardedFuzz, guardedParent or guardedChild. Its
+// child is given guardedURL too, the address of its parent's listener.
+const (
+	guardedRole = "TESTKIT_TEST_GUARDED"
+	guardedURL  = "TESTKIT_TEST_URL"
+)
+
 // The modes of guardChild.
 const (
 	modeOn       = "on"        // NoNetwork: every result, a child's and a nested run's too

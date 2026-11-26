@@ -421,7 +421,11 @@ func isolate(start []string, opts []Option) (func() error, error) {
 	for i, k := range goDirs() {
 		set[k] = dirs[i]
 	}
-	if err := replace(keptOf(start, c), set); err != nil {
+	keep := keptOf(start, c)
+	if c.guard {
+		keep = append(withoutGuardVar(keep), guardRerunEnv()...) // the guard's marker, set once its probe passed
+	}
+	if err := replace(keep, set); err != nil {
 		return nil, errors.Join(err, replace(before, nil), os.RemoveAll(own))
 	}
 	config, err := os.UserConfigDir()

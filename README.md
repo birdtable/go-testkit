@@ -121,7 +121,8 @@ Main sets the guard before any test runs, and proves it: a connect to `192.0.2.1
 by the guard, and one to a listener on `127.0.0.1` must succeed. `NoNetwork` is an option of `Main`
 alone: `Isolate` runs no `Before`, so given one it returns an error and isolates nothing. On macOS the guard is the system
 sandbox, set on the test process with `sandbox_init`. On Linux the test binary reruns in a user and
-network namespace of its own, with only loopback up. The guard is tested on macOS arm64 and Linux
+network namespace of its own, with only loopback up, and every start of the test binary inside it,
+a fuzz worker or a helper child started by `os/exec`, stays inside. The guard is tested on macOS arm64 and Linux
 amd64. On macOS amd64 it is not tested: it is vetted by CI on every pull request, and built by the
 push tier.
 

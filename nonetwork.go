@@ -26,9 +26,11 @@ import (
 // Main reruns the test binary in a user and network namespace of its own, where only loopback is up: its
 // first child, root of that namespace, brings loopback up, and runs the tests as its own child in a
 // nested user namespace, with the caller's uid and gid and no capability. Main returns their exit code.
-// The rerun is handed on by RerunEnv, so a child of Rerun is already inside and does not nest again. The
-// rerun's GODEBUG ends with netdns=go, after the settings the caller gave it, so the test binary and a
-// Go program it starts with that environment look a name up with Go's own resolver, which fails there.
+// The tests' environment keeps the guard's marker once the probe passed, and RerunEnv hands it to a child
+// of Rerun, so a start of the test binary inside the guard, a fuzz worker or a helper child started by
+// os/exec too, checks itself and does not nest again. The rerun's GODEBUG ends with netdns=go, after the
+// settings the caller gave it, so the test binary and a Go program it starts with that environment look
+// a name up with Go's own resolver, which fails there.
 //
 // Where the guard cannot be set, or the probe fails, Main returns 1 and an error that names the system
 // and the reason, and no test runs. Windows gives an unprivileged process no way to refuse outbound
@@ -58,8 +60,32 @@ func NoNetwork(unguardedOn ...string) Option {
 	return Options(
 		Before(func(start []string) (int, bool, error) { return noNetwork(start, unguarded, guardHere) }),
 		RerunEnv(guardRerunEnv),
+		Keep(guardVar), // isolate keeps the guard's own value alone, once the probe passed (guardVar)
 		func(c *conf) { c.guard = true },
 	)
+}
+
+// guardVar carries the part of the guard a process is, on Linux, from the process that made the
+// namespaces to the one it starts. It is testkit's own, never a name a caller sets. Its value is
+// "init:<uid>:<gid>:<net>" for the root of the new namespaces, or "run:<net>" for the tests, net being
+// the link of the network namespace the run started in (/proc/self/ns/net, "net:[<inode>]"). Main keeps
+// "run:<net>" in the tests' environment once the probe passed, and no other value of it on any system,
+// so each start of the test binary inside the guard (a fuzz worker, a helper child) checks itself and
+// does not nest; RerunEnv hands it to a child of Rerun too. A stray value never opens the network: a run
+// is guarded only in a network namespace other than that one where every interface that is up is
+// loopback, and only once the probe passes there; a run in another namespace where one is up that is not
+// loopback refuses, naming it, and never starts the namespaces again; any other run starts them itself.
+const guardVar = "TESTKIT_NONETWORK"
+
+// withoutGuardVar is environ with guardVar left out.
+func withoutGuardVar(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, guardVar+"=") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // knownOS is every GOOS that go tool dist list names: a name of unguardedOn is one of them.

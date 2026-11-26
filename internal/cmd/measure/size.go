@@ -61,7 +61,12 @@ import (
 // Raised by 9 to 6014, by measure, for the guard's interface check on Linux: wayOut counts only the
 // interfaces that are up and names the first way out, a run in another namespace that fails it refuses
 // rather than nest again, and extraInterfaces is the add-only seam its tests use (nonetwork_linux.go).
-const Ceiling = 6014
+//
+// Raised by 9 to 6023, by measure, for the guard's marker in the tests' environment: NoNetwork keeps
+// guardVar and isolate puts the guard's own value of it there once the probe passed, so a fuzz worker or
+// a helper child does not nest (testkit.go, nonetwork.go); guardVar's doc, moved to nonetwork.go to be
+// read on every system, and NoNetwork's say so.
+const Ceiling = 6023
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
