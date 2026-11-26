@@ -45,12 +45,11 @@ import (
 // go's output on Stderr.
 func BuildAt(t testing.TB, ref, pkg string, opts ...Option) *Binary {
 	t.Helper()
-	wd, _ := os.Getwd() // an error leaves "", which has no go.mod above it, and sourceAt says so
-	return buildAtIn(t, wd, ref, pkg, opts...)
+	return buildAtIn(t, "", ref, pkg, opts...) // "": the test's folder
 }
 
-// buildAtIn is BuildAt from the folder from, not the test's: the repository and its module are the
-// ones from is in. BuildAt reads the folder only there, so its own tests run in parallel.
+// buildAtIn is BuildAt from the folder from, or the test's where from is empty: the repository and its
+// module are the ones from is in. Given a folder, it reads no cwd, so BuildAt's own tests run in parallel.
 func buildAtIn(t testing.TB, from, ref, pkg string, opts ...Option) *Binary {
 	t.Helper()
 	if inForce().set == nil {

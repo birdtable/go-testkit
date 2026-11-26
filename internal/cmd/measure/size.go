@@ -87,11 +87,11 @@ import (
 // seccomp profile outside it; runGuarded takes the caller's uid, which the namespace's root is not; and
 // the docs say guardedFrom is set before the probe, and a child probes again (nonetwork_linux.go, nonetwork.go).
 //
-// Raised by 14 to 6207, by measure, for the release tier's time on macOS: BuildAt reads the test's
+// Raised by 16 to 6209, by measure, for the release tier's time on macOS: BuildAt reads the test's
 // folder in one place and buildAtIn resolves from a folder it is given, so BuildAt's own tests that
 // need no chdir run in parallel (buildat.go); and modRootOf is modRoot from a given folder, which
 // modRoot and sourceAt share (binary.go).
-const Ceiling = 6207
+const Ceiling = 6209
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
