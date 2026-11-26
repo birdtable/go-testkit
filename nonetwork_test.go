@@ -261,3 +261,22 @@ func TestTheProbeFailsAGuardThatHoldsNothing(t *testing.T) {
 		t.Errorf("a probe whose connection was refused by no guard says %q", why)
 	}
 }
+
+// Planted failure: an Isolate that takes NoNetwork as any other option isolates the tests and sets no
+// guard, so they run with the network open and nothing says so. Risk: none; the refusal changes nothing.
+func TestIsolateGivenNoNetworkReturnsAnErrorAndChangesNothing(t *testing.T) {
+	t.Parallel()
+	home := os.Getenv("HOME")
+	for _, opts := range [][]Option{{NoNetwork()}, {Keep("GOWORK"), Options(NoNetwork(hostOS()))}} {
+		restore, err := Isolate(opts...)
+		if err == nil || restore != nil || !strings.Contains(err.Error(), "NoNetwork is an option of Main") {
+			if restore != nil {
+				_ = restore()
+			}
+			t.Fatalf("Isolate given NoNetwork returned %v, want no restore and the error naming Main", err)
+		}
+	}
+	if got := os.Getenv("HOME"); got != home {
+		t.Errorf("a refused Isolate moved HOME from %q to %q", home, got)
+	}
+}

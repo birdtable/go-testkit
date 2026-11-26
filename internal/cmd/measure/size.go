@@ -51,7 +51,10 @@ import (
 // Raised by 19 to 5992, by measure, for NoNetwork's Go resolver on Linux: nonetwork_linux.go's
 // withGoResolver appends netdns=go to the rerun's GODEBUG, keeping the caller's settings (17), and
 // nonetwork.go's doc says so and narrows the limit to programs that are not Go (2).
-const Ceiling = 5992
+//
+// Raised by 9 to 6001, by measure, for Isolate's refusal of NoNetwork: conf's guard flag, which NoNetwork
+// sets, and Isolate's check, its error and its doc (testkit.go, 9); NoNetwork's doc keeps its lines.
+const Ceiling = 6001
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
