@@ -115,10 +115,21 @@ import (
 // and fields read a go.mod's module and require lines with the standard library alone, as the root
 // takes nothing else; the gate's folder is taken by its real path; and check 2's doc says it.
 //
-// Raised by 11 to 6781, by measure, for readGoMod (main.go, 11): baseWork's two go.mod reads go
+// Raised by 534 to 7304, by measure, for canary, the planted fake secrets a test checks files,
+// streams and values for: canary.go, the plant and its refusals, each value's needles in raw, hex,
+// base64 at three alignments, URL escaping and UTF-16 with one hit for the two byte orders one byte
+// apart, the chunked read that keeps a tail so a value across two chunks is found, the four checks
+// and their report, the open that does not wait on a FIFO swapped in after the walk, the search of
+// each path below the folder, the redaction that shows a value in a place, a path or an error as its
+// name, the refusal of a check on a Set with nothing planted, and the package doc's limits. From 559,
+// the read for removable code took out 35 lines (unreachable error branches, a helper the standard
+// library has, a guard that guarded nothing and the two one-system open files), and the one hit for
+// UTF-16's two byte orders added 10.
+//
+// Raised by 11 to 7315, by measure, for readGoMod (main.go, 11): baseWork's two go.mod reads go
 // through one function that reads by filepath.Clean and returns nothing on an error, as before, so
 // the two lines need no nolint directive.
-const Ceiling = 6781
+const Ceiling = 7315
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
