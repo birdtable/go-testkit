@@ -374,7 +374,7 @@ func (g *gate) base() (string, error) {
 		return "", errStop
 	}
 	base, nearest := "", -1
-	for _, parent := range strings.Fields(string(b)) {
+	for parent := range strings.FieldsSeq(string(b)) {
 		tag, ok := g.describe(tags, parent)
 		if !ok {
 			return "", errStop
