@@ -87,12 +87,18 @@ import (
 // seccomp profile outside it; runGuarded takes the caller's uid, which the namespace's root is not; and
 // the docs say guardedFrom is set before the probe, and a child probes again (nonetwork_linux.go, nonetwork.go).
 //
-// Raised by 365 to 6558, by measure, for RequireMain, the check that every package's TestMain calls
+// Raised by 30 to 6223, by measure, for options only Main acts on, refused where they would be ignored:
+// mainOnly, which reads conf's flags and names NoNetwork, Before or RerunEnv, takes the place of Isolate's
+// errIsolateGuard, with the Before and RerunEnv docs saying who refuses them (testkit.go, 21); Build
+// refuses through refusedPkg (binary.go, 4); BuildAt fails the test (buildat.go, 4); and NoNetwork's doc
+// says Build and BuildAt refuse it too (nonetwork.go, 1).
+//
+// Raised by 365 to 6588, by measure, for RequireMain, the check that every package's TestMain calls
 // Main: requiremain.go is 363, go list -e -json for darwin, linux and windows with GOARCH=amd64 and cgo
 // off, the TestMain and its call read with go/parser, the opt-out line, the file and build line that
 // leave a TestMain out, a package a pattern names that a system builds nothing of passed, go's errors
 // with the import they name, and its doc; and doc.go's two lines name it (2).
-const Ceiling = 6558
+const Ceiling = 6588
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

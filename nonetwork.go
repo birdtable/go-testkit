@@ -18,7 +18,8 @@ import (
 // the system's resolver fails. Loopback stays open, so an httptest server works. Main sets the guard
 // before any test runs, and then proves it: a TCP connect to 192.0.2.1:9 (TEST-NET-1, which is never
 // routed) must fail at once with the guard's own error, and a connect to a listener on 127.0.0.1 must
-// succeed. Isolate runs no Before, so Isolate given NoNetwork returns an error and isolates nothing.
+// succeed. It is an option of Main alone: Isolate given NoNetwork returns an error and isolates
+// nothing, and Build and BuildAt refuse it too, as none of them sets the guard.
 //
 // On macOS Main calls the system sandbox's sandbox_init on the test process itself, with a profile that
 // denies every outbound connection but to localhost and to a Unix socket, and denies the resolver's

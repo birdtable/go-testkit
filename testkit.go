@@ -146,7 +146,7 @@ type conf struct {
 	rerunEnv []func() []string                                       // what a Rerun's child is given beside Clean's (RerunEnv)
 
 	offline bool // the settings of offline win over the run's, a Keep and a Drop (GoOffline)
-	guard   bool // a NoNetwork is among the options, whose guard only Main's Before sets, so Isolate refuses it
+	guard   bool // a NoNetwork is among the options, whose guard only Main's Before sets, so mainOnly refuses it
 }
 
 // GoOffline makes every go a test starts run with no network: no module proxy, no direct
@@ -168,7 +168,8 @@ func GoOffline() Option {
 // Before makes Main run f on the environment the process started in, before it isolates the process
 // and before any test runs. Main runs each Before in the order given; the first whose done is true
 // ends Main with its code and err, and then no test runs and no later Before is called. One whose done
-// is false lets Main go on, whatever its code and err. Isolate alone runs none. A nil f adds nothing.
+// is false lets Main go on, whatever its code and err. Only Main runs one: Isolate, Build and BuildAt
+// refuse options that hold a Before, naming it, as they would run none. A nil f adds nothing.
 // A containment is a Before: its f reruns the test binary inside the containment and returns the
 // rerun's code with done true, or done false in the rerun itself, which then runs the tests.
 func Before(f func(start []string) (code int, done bool, err error)) Option {
@@ -188,7 +189,8 @@ func Before(f func(start []string) (code int, done bool, err error)) Option {
 // holds for as long as the isolation of the Main or Isolate given it is in force, so it reaches every
 // Rerun of the tests of that run; a Rerun with no Main or Isolate in force gives no entry of any
 // RerunEnv. f is called from the test that reruns, so one called from parallel tests is safe for
-// concurrent use. A nil f adds nothing.
+// concurrent use. Build and BuildAt refuse options that hold a RerunEnv, naming it, as a run of the
+// binary is no Rerun. A nil f adds nothing.
 func RerunEnv(f func() []string) Option {
 	return func(c *conf) {
 		if f != nil {
@@ -387,16 +389,35 @@ func run(m interface{ Run() int }, start []string, opts []Option) (int, error) {
 // them: on macOS a path under /var/folders, where a path read back by filepath.EvalSymlinks or
 // os.Getwd is under /private/var/folders, as /var is a link. A test that compares the two resolves
 // its own with filepath.EvalSymlinks first. Isolate runs no Before, so options that hold a NoNetwork
-// are its error, and it changes nothing: the tests would otherwise run with the network open.
+// or a Before, a containment's among them, are its error, naming the option, and it changes nothing:
+// the tests would otherwise run with the network open, or outside the containment.
 func Isolate(opts ...Option) (restore func() error, err error) {
-	if confOf(opts).guard {
-		return nil, errIsolateGuard
+	if err := mainOnly("Isolate", opts); err != nil {
+		return nil, err
 	}
 	return isolate(os.Environ(), opts)
 }
 
-// errIsolateGuard is Isolate's refusal of options that hold a NoNetwork.
-var errIsolateGuard = errors.New("NoNetwork is an option of Main: Isolate runs no Before, so it would set no guard and the tests would run with the network open")
+// mainOnly is fn's refusal of opts where they hold an option fn would otherwise ignore, as only Main
+// acts on it, or nil where they hold none. It reads the conf's flags: guard, which NoNetwork sets; a
+// Before's hook, which only Main runs; and a RerunEnv's hook, which a Rerun under Main or Isolate
+// alone calls, so it is refused by every fn but Isolate. NoNetwork holds a Before and a RerunEnv, and
+// is named for itself; a containment is a Before.
+func mainOnly(fn string, opts []Option) error {
+	c := confOf(opts)
+	var name, why string
+	switch {
+	case c.guard:
+		name, why = "NoNetwork", "runs no Before, so it would set no guard and the network would stay open; give it to Main"
+	case len(c.before) > 0:
+		name, why = "Before", "runs no Before, so a containment, or any other Before, would not run; give it to Main"
+	case len(c.rerunEnv) > 0 && fn != "Isolate":
+		name, why = "RerunEnv", "starts no Rerun, so it would add nothing; give it to Main or Isolate"
+	default:
+		return nil
+	}
+	return fmt.Errorf("%s was given %s, an option of Main: %s %s", fn, name, fn, why)
+}
 
 // isolate is Isolate from start, the environment the process is taken to have started in, which
 // in Isolate is its own. It sets active to the conf the options build only once the environment is

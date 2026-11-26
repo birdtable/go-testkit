@@ -66,3 +66,14 @@ func localAddr(t *testing.T) string {
 	t.Fatal("this host has no IPv4 address but loopback, and the guard's test dials one to show it refused with no packet leaving")
 	return ""
 }
+
+// freePort is a TCP port nothing listened on a moment ago: the kernel's choice for a listener at once closed.
+func freePort(t *testing.T) string {
+	t.Helper()
+	l := listenLoopback(t)
+	_, port, _ := net.SplitHostPort(l.Addr().String())
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
