@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/birdtable/go-testkit"
 	"github.com/birdtable/go-testkit/canary"
 	"github.com/birdtable/go-testkit/fake"
+	"github.com/birdtable/go-testkit/sizecap"
 )
 
 // The second consumer's own values, each unlike what testkit's own tests and Taskfile use.
@@ -33,6 +35,8 @@ const (
 	keyName     = "sc-api-key"                              // the name the consumer plants its own key under
 	badge       = "tkcanary-sc-badge-0001"                  // a planted value in the consumer's own format, with the canary prefix, which New would not make
 	logPlace    = "sync log"                                // the place the consumer names its captured log
+	recordCap   = 7777                                      // the most bytes the consumer's record parser takes
+	recordHead  = "SCR1\n"                                  // the head of a record in the consumer's own format, which refuses spaces
 )
 
 // say writes s to a Rerun child's stdout, which the Rerun that started it reads.
@@ -207,5 +211,41 @@ func TestTheCanaryPlantsTheConsumersOwnKeyAndNamesItsPlace(t *testing.T) {
 	said := strings.Join(c.lines, "\n")
 	if !strings.Contains(said, fmt.Sprintf("canary: the planted %q is in %q", keyName, logPlace)) || strings.Contains(said, badge) {
 		t.Errorf("the canary said %q, want the consumer's name and place and never its key", said)
+	}
+}
+
+// sizecap proves the consumer's own cap on its own record format, by the consumer's own error and
+// with its own bytes given by Fill, and a cap one byte over the parser's is named by the consumer's
+// sizes.
+//
+// What it costs when this fails: a consumer whose format refuses testkit's filler cannot prove its
+// cap, or Prove holds a size or an error of ours in place of the consumer's.
+func TestSizecapProvesTheConsumersCapOnItsOwnRecords(t *testing.T) {
+	t.Parallel()
+	errLong, errMalformed := errors.New("sc: record too long"), errors.New("sc: not a record")
+	parse := func(r io.Reader) error {
+		b, err := io.ReadAll(io.LimitReader(r, recordCap+1))
+		switch {
+		case err != nil:
+			return err
+		case int64(len(b)) > recordCap:
+			return fmt.Errorf("sc: %d bytes: %w", len(b), errLong)
+		case !bytes.HasPrefix(b, []byte(recordHead)) || len(bytes.Trim(b[len(recordHead):], ".")) > 0:
+			return errMalformed
+		}
+		return nil
+	}
+	records := sizecap.Fill(func(n int64) io.Reader {
+		return strings.NewReader(recordHead + strings.Repeat(".", int(n)-len(recordHead)))
+	})
+	c := &caught{TB: t}
+	sizecap.Prove(c, recordCap, errLong, parse, records)
+	if len(c.lines) > 0 {
+		t.Errorf("Prove of the consumer's cap said %q, want nothing", c.lines)
+	}
+	c = &caught{TB: t}
+	sizecap.Prove(c, recordCap+1, errLong, parse, records)
+	if said := strings.Join(c.lines, "\n"); !strings.Contains(said, "the max side broke: parse refused 7778 bytes") {
+		t.Errorf("Prove of a cap a byte over the consumer's said %q, want the max side named with the consumer's sizes", said)
 	}
 }
