@@ -25,7 +25,11 @@ import (
 // socket and service; the sandbox holds every thread of the process and everything it starts. On Linux
 // Main reruns the test binary in a user and network namespace of its own, where only loopback is up: its
 // first child, root of that namespace, brings loopback up, and runs the tests as its own child in a
-// nested user namespace, with the caller's uid and gid and no capability. Main returns their exit code.
+// nested user namespace, with the caller's uid and gid. Main returns their exit code. A caller that is not
+// uid 0 holds no capability there. A uid 0 caller's tests hold every capability of that nested user
+// namespace and none over the network namespace, which the root's owns, so the guard holds. Beside the
+// contain module, NoNetwork goes first: Main(m, NoNetwork(), contain.Contain()). As uid 0 the other
+// order is refused, and Main's error says to put NoNetwork first.
 // The tests' environment keeps the guard's marker once the probe passed, and RerunEnv hands it to a child
 // of Rerun, so a start of the test binary inside the guard, a fuzz worker or a helper child started by
 // os/exec too, checks itself and does not nest again. The rerun's GODEBUG ends with netdns=go, after the

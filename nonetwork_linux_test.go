@@ -3,6 +3,7 @@
 package testkit
 
 import (
+	"io/fs"
 	"net"
 	"strings"
 	"syscall"
@@ -143,4 +144,23 @@ func TestATunnelInterfaceThatIsDownLetsTheGuardedRunPass(t *testing.T) {
 func TestAnInterfaceUpBesideTheGuardsLoopbackRefusesNamingIt(t *testing.T) {
 	t.Parallel()
 	refused(t, refusalUpLink)
+}
+
+// Planted failure: a refusal that says nothing of the order leaves a uid 0 caller that put contain's
+// containment first with "operation not permitted" alone; one that says it to every caller misleads
+// those whose host refuses the namespace. Risk: none; the wording is read, and CI runs as no uid 0.
+func TestAsUID0ARefusedNamespaceSaysToPutNoNetworkFirst(t *testing.T) {
+	t.Parallel()
+	const first = "put NoNetwork before contain.Contain"
+	denied := &fs.PathError{Op: "fork/exec", Path: "/the/test.binary", Err: syscall.EPERM}
+	for _, tc := range []struct {
+		err  error
+		uid  int
+		says bool
+	}{{denied, 0, true}, {denied, 1000, false}, {&fs.PathError{Op: "fork/exec", Path: "/the/test.binary", Err: syscall.EINVAL}, 0, false}} {
+		why := namespaceRefused(tc.err, tc.uid)
+		if !strings.Contains(why, "the system refused the namespace: "+tc.err.Error()) || strings.Contains(why, first) != tc.says {
+			t.Errorf("the refusal of %v as uid %d says %q; want the system's error, and %q said: %v", tc.err, tc.uid, why, first, tc.says)
+		}
+	}
 }

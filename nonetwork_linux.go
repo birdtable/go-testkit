@@ -160,6 +160,17 @@ func guardRoot(arg string) (code int, ok bool) {
 	return code, true
 }
 
+// namespaceRefused is why the guard was not set where the system refused to start the namespace's root
+// with err, uid being the caller's. As uid 0 a refusal of permission is most often a containment that
+// came first and dropped the capability to make the namespace, so it says which order holds.
+func namespaceRefused(err error, uid int) string {
+	why := "the system refused the namespace: " + err.Error()
+	if uid == 0 && errors.Is(err, syscall.EPERM) {
+		why += "; as uid 0, put NoNetwork before contain.Contain in Main's options, so the guard is set first"
+	}
+	return why
+}
+
 // runGuarded starts cmd, and with r reads the one line its child writes to w; with no r, it writes
 // guardReady to w itself once cmd started. It then passes on the run's signals to cmd and is its exit
 // code. why is set, and nothing waited for, when cmd did not start or its child said why not.
@@ -172,7 +183,7 @@ func runGuarded(cmd *exec.Cmd, r, w *os.File) (code int, why string, err error) 
 		_ = w.Close() //nolint:errcheck // the parent's end of the child's pipe, closed once the child holds its own
 	}
 	if err != nil {
-		return 0, "the system refused the namespace: " + err.Error(), nil
+		return 0, namespaceRefused(err, os.Getuid()), nil
 	}
 	if r != nil {
 		line, _ := bufio.NewReader(r).ReadString('\n') //nolint:errcheck // a pipe that ended with no line is the root's end, and line is empty then

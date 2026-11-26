@@ -66,7 +66,11 @@ import (
 // guardVar and isolate puts the guard's own value of it there once the probe passed, so a fuzz worker or
 // a helper child does not nest (testkit.go, nonetwork.go); guardVar's doc, moved to nonetwork.go to be
 // read on every system, and NoNetwork's say so.
-const Ceiling = 6023
+//
+// Raised by 15 to 6038, by measure, for NoNetwork beside contain as uid 0: NoNetwork's doc says what a
+// uid 0 caller's tests hold and that NoNetwork goes first (4), and namespaceRefused, the refusal's
+// wording, says so to a uid 0 caller refused with no permission (nonetwork_linux.go, 11).
+const Ceiling = 6038
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

@@ -137,12 +137,18 @@ stderr saying so, and runs them. The refusals:
 | The system has no guard | Windows, and all but macOS and Linux | `Windows gives an unprivileged process no way to refuse outbound connections and keep loopback` | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
 | The process already runs in a sandbox | macOS (`sandbox-exec`, an agent's sandboxed shell) | `sandbox_init refused the profile`, and that the process already runs inside a sandbox | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
 | The host refuses an unprivileged user namespace | Linux | `the system refused the namespace` | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
+| As uid 0, `contain.Contain` comes before `NoNetwork` in `Main`'s options | Linux | `the system refused the namespace`, and `put NoNetwork before contain.Contain` | `TestAsUID0ARefusedNamespaceSaysToPutNoNetworkFirst` |
 | Loopback does not come up in the new namespace | Linux (Ubuntu's `kernel.apparmor_restrict_unprivileged_userns=1`) | `loopback could not be brought up in the new network namespace` | `TestALoopbackThatWillNotComeUpRefusesTheGuard` |
 | An interface that is up and not loopback is in the tests' new namespace | Linux | `an interface that is not loopback is up in the guard's network namespace`, and its name | `TestAnInterfaceUpBesideTheGuardsLoopbackRefusesNamingIt` |
 | The new namespace is the run's own | Linux | `the new network namespace is the one the run started in` | `TestAGuardLeftInTheRunsNetworkNamespaceRefuses` |
 | The probe's connect was made, or failed some other way | every guarded system | `the probe's connection to 192.0.2.1:9 was made`, or `failed, but not with the guard's` | `TestTheProbeFailsAGuardThatHoldsNothing` |
 | Setting the guard failed with an error, whatever its step said of done | every guarded system | the step's error, and Main's code is 1 or more | `TestAGuardStepThatErrsWithDoneFalseEndsTheRun` |
 | The probe cannot reach loopback | every guarded system | `the probe could not reach its listener on loopback` | none: no guard of testkit's closes loopback |
+
+With the `contain` module, put `NoNetwork` first: `testkit.Main(m, testkit.NoNetwork(), contain.Contain())`.
+On Linux the tests run in a nested user namespace with your uid and gid. If you are not uid 0 they
+hold no capability there. As uid 0 they hold every capability of that user namespace and none over
+the network namespace, so the guard still holds.
 
 On Linux the rerun's `GODEBUG` ends with `netdns=go`, after any settings you gave it. So the test
 binary, and a Go program it starts with that environment, look names up with Go's own resolver, which

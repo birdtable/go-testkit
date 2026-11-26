@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'NoNetwork''s doc says what a uid 0 caller''s tests hold on Linux, every capability of the nested user namespace and none over the network namespace, and that NoNetwork goes before contain.Contain; as uid 0 the other order''s refusal says so.'
+time: 2026-11-26T10:05:00.000000+01:00
