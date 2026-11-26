@@ -1,0 +1,7 @@
+# Each line is one finding, by its fingerprint, that gitleaks reads as a secret and is not one. A
+# fingerprint names the commit, file, rule and line, so a line here covers that finding alone.
+#
+# The second consumer's planted canary key, a fake in a format of its own, written as an assigned
+# value in the commit that added its row; the next commit renamed the constant so the rule no longer
+# matches it.
+2ffd624a31dc433330c5798116694b2c80815598:internal/example/secondconsumer/secondconsumer_test.go:assigned-secret-value:34

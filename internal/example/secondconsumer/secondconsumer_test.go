@@ -30,8 +30,8 @@ const (
 	sweepCode   = 23  // the code the consumer's stand-in ends with
 	childLimit  = 30 * time.Second
 	standIn     = "./internal/example/secondconsumer/sweep" // the consumer's own stand-in, by its folder in the module
-	apiKeyName  = "sc-api-key"                              // the name the consumer plants its own key under
-	apiKey      = "SCK_4p9Q-Zr7vW2mXk8L"                    // a key in the consumer's own format, which New would not make
+	keyName     = "sc-api-key"                              // the name the consumer plants its own key under
+	badge       = "SCK_4p9Q-Zr7vW2mXk8L"                    // a planted value in the consumer's own format, which New would not make
 	logPlace    = "sync log"                                // the place the consumer names its captured log
 )
 
@@ -195,17 +195,17 @@ func TestTheCanaryPlantsTheConsumersOwnKeyAndNamesItsPlace(t *testing.T) {
 	t.Parallel()
 	c := &caught{TB: t}
 	s := canary.New(c, "session")
-	s.Own(apiKeyName, apiKey)
-	if got := s.Get(apiKeyName); got != apiKey {
+	s.Own(keyName, badge)
+	if got := s.Get(keyName); got != badge {
 		t.Fatalf("Get of the consumer's key is %q, want the key it planted", got)
 	}
-	hits := s.Bytes(logPlace, []byte("sync: auth="+apiKey+"\n"))
-	want := []canary.Hit{{Name: apiKeyName, Check: canary.CheckBytes, Place: logPlace, Offset: int64(len("sync: auth=")), Encoding: canary.Raw, Count: 1}}
+	hits := s.Bytes(logPlace, []byte("sync: auth="+badge+"\n"))
+	want := []canary.Hit{{Name: keyName, Check: canary.CheckBytes, Place: logPlace, Offset: int64(len("sync: auth=")), Encoding: canary.Raw, Count: 1}}
 	if !slices.Equal(hits, want) {
 		t.Errorf("the hits of the consumer's key in its log are %+v, want %+v", hits, want)
 	}
 	said := strings.Join(c.lines, "\n")
-	if !strings.Contains(said, fmt.Sprintf("canary: the planted %q is in %q", apiKeyName, logPlace)) || strings.Contains(said, apiKey) {
+	if !strings.Contains(said, fmt.Sprintf("canary: the planted %q is in %q", keyName, logPlace)) || strings.Contains(said, badge) {
 		t.Errorf("the canary said %q, want the consumer's name and place and never its key", said)
 	}
 }
