@@ -74,7 +74,12 @@ import (
 // Raised by 7 to 6045, by measure, for tests that cannot read their network namespace on Linux: the run
 // refuses, naming the link and its error, rather than nest again, and runNetLink is the seam its test
 // names a link of no namespace by (nonetwork_linux.go).
-const Ceiling = 6045
+//
+// Raised by 12 to 6057, by measure, for the uid 0 refusal's two causes: namespaceRefused says to put
+// NoNetwork first only inside contain's containment, read by containedVar, and names a container's
+// seccomp profile outside it; runGuarded takes the caller's uid, which the namespace's root is not; and
+// the docs say guardedFrom is set before the probe, and a child probes again (nonetwork_linux.go, nonetwork.go).
+const Ceiling = 6057
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

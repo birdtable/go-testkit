@@ -46,8 +46,9 @@ var (
 	runNetLink                      = netLink                                      //nolint:gochecknoglobals // a refusal's test writes a link of no namespace
 )
 
-// guardedFrom is the network namespace this run started in, set once the probe passed in a run that is
-// the tests of the guard, and read by RerunEnv for a child of Rerun.
+// guardedFrom is the network namespace this run started in, set in a run that is the tests of the guard
+// once they checked their namespace, before the probe, and read by RerunEnv and isolate for a child,
+// which checks and probes again: where the probe then fails, no child of the run is guarded by it.
 var guardedFrom atomic.Pointer[string] //nolint:gochecknoglobals // set once by Main, before any test, read by Rerun from parallel tests
 
 // guardHere is NoNetwork on Linux. The first run starts the namespaces' root and returns its tests' exit
@@ -107,7 +108,7 @@ func guardFirst(start []string) (code int, done bool, why string, err error) {
 		GidMappingsEnableSetgroups: false,
 		Pdeathsig:                  syscall.SIGKILL,
 	}
-	code, why, err = runGuarded(cmd, r, w)
+	code, why, err = runGuarded(cmd, r, w, uid)
 	return code, why == "", why, err
 }
 
@@ -156,7 +157,7 @@ func guardRoot(arg string) (code int, ok bool) {
 		GidMappingsEnableSetgroups: false,
 		Pdeathsig:                  syscall.SIGKILL,
 	}
-	code, why, err := runGuarded(cmd, nil, ready)
+	code, why, err := runGuarded(cmd, nil, ready, uid)
 	if why != "" {
 		_, _ = fmt.Fprintln(ready, why) //nolint:errcheck // as above
 		return 1, true
@@ -167,21 +168,32 @@ func guardRoot(arg string) (code int, ok bool) {
 	return code, true
 }
 
-// namespaceRefused is why the guard was not set where the system refused to start the namespace's root
-// with err, uid being the caller's. As uid 0 a refusal of permission is most often a containment that
-// came first and dropped the capability to make the namespace, so it says which order holds.
-func namespaceRefused(err error, uid int) string {
+// containedVar is the contain module's marker of a run inside its containment (contain's containVar),
+// which the tests' environment holds where contain.Contain came before NoNetwork in Main's options.
+const containedVar = "TESTKIT_CONTAINED"
+
+// namespaceRefused is why the guard was not set where the system refused to start a namespace with err,
+// uid being the caller's and contained whether contain's marker is in the run's environment. As uid 0
+// a refusal of permission inside contain's containment is the capability it dropped before NoNetwork
+// ran, so it says to put NoNetwork first; as uid 0 outside it, it is most often a container's seccomp
+// profile, so it says that, and never names an option the caller did not pass.
+func namespaceRefused(err error, uid int, contained bool) string {
 	why := "the system refused the namespace: " + err.Error()
-	if uid == 0 && errors.Is(err, syscall.EPERM) {
-		why += "; as uid 0, put NoNetwork before contain.Contain in Main's options, so the guard is set first"
+	switch {
+	case uid != 0 || !errors.Is(err, syscall.EPERM):
+	case contained:
+		why += "; as uid 0 inside contain's containment, which dropped the capability to make it: put NoNetwork before contain.Contain in Main's options"
+	default:
+		why += "; as uid 0, this is most often a container's seccomp profile that refuses a new user namespace"
 	}
 	return why
 }
 
 // runGuarded starts cmd, and with r reads the one line its child writes to w; with no r, it writes
 // guardReady to w itself once cmd started. It then passes on the run's signals to cmd and is its exit
-// code. why is set, and nothing waited for, when cmd did not start or its child said why not.
-func runGuarded(cmd *exec.Cmd, r, w *os.File) (code int, why string, err error) {
+// code. why is set, and nothing waited for, when cmd did not start or its child said why not; uid is the
+// caller's, which the namespace's root is not.
+func runGuarded(cmd *exec.Cmd, r, w *os.File, uid int) (code int, why string, err error) {
 	// Pdeathsig follows the thread that started the child, not the process.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -190,7 +202,7 @@ func runGuarded(cmd *exec.Cmd, r, w *os.File) (code int, why string, err error) 
 		_ = w.Close() //nolint:errcheck // the parent's end of the child's pipe, closed once the child holds its own
 	}
 	if err != nil {
-		return 0, namespaceRefused(err, os.Getuid()), nil
+		return 0, namespaceRefused(err, uid, lookup(cmd.Env, containedVar) != ""), nil
 	}
 	if r != nil {
 		line, _ := bufio.NewReader(r).ReadString('\n') //nolint:errcheck // a pipe that ended with no line is the root's end, and line is empty then

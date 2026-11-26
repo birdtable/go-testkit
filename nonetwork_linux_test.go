@@ -5,6 +5,8 @@ package testkit
 import (
 	"io/fs"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -155,20 +157,33 @@ func TestAnInterfaceUpBesideTheGuardsLoopbackRefusesNamingIt(t *testing.T) {
 }
 
 // Planted failure: a refusal that says nothing of the order leaves a uid 0 caller that put contain's
-// containment first with "operation not permitted" alone; one that says it to every caller misleads
-// those whose host refuses the namespace. Risk: none; the wording is read, and CI runs as no uid 0.
+// containment first with "operation not permitted" alone; one that names the order outside contain's
+// containment sends a caller in a container under its default seccomp profile, which refuses a new user
+// namespace with EPERM, after an option it never passed; one that says either to a caller that is not
+// uid 0 misleads those whose host refuses the namespace. Risk: none; the wording is read, and CI runs
+// as no uid 0.
 func TestAsUID0ARefusedNamespaceSaysToPutNoNetworkFirst(t *testing.T) {
 	t.Parallel()
-	const first = "put NoNetwork before contain.Contain"
+	const order, seccomp = "put NoNetwork before contain.Contain in Main's options", "a container's seccomp profile that refuses a new user namespace"
 	denied := &fs.PathError{Op: "fork/exec", Path: "/the/test.binary", Err: syscall.EPERM}
+	invalid := &fs.PathError{Op: "fork/exec", Path: "/the/test.binary", Err: syscall.EINVAL}
 	for _, tc := range []struct {
-		err  error
-		uid  int
-		says bool
-	}{{denied, 0, true}, {denied, 1000, false}, {&fs.PathError{Op: "fork/exec", Path: "/the/test.binary", Err: syscall.EINVAL}, 0, false}} {
-		why := namespaceRefused(tc.err, tc.uid)
-		if !strings.Contains(why, "the system refused the namespace: "+tc.err.Error()) || strings.Contains(why, first) != tc.says {
-			t.Errorf("the refusal of %v as uid %d says %q; want the system's error, and %q said: %v", tc.err, tc.uid, why, first, tc.says)
+		err       error
+		uid       int
+		contained bool
+		says      string
+	}{
+		{denied, 0, true, order}, {denied, 0, false, seccomp},
+		{denied, 1000, true, ""}, {denied, 1000, false, ""}, {invalid, 0, true, ""}, {invalid, 0, false, ""},
+	} {
+		why := namespaceRefused(tc.err, tc.uid, tc.contained)
+		if !strings.Contains(why, "the system refused the namespace: "+tc.err.Error()) {
+			t.Errorf("the refusal of %v as uid %d says %q; want the system's error", tc.err, tc.uid, why)
+		}
+		for _, advice := range []string{order, seccomp} {
+			if strings.Contains(why, advice) != (advice == tc.says) {
+				t.Errorf("the refusal of %v as uid %d, contained %v, says %q; want %q said: %v", tc.err, tc.uid, tc.contained, why, advice, advice == tc.says)
+			}
 		}
 	}
 }
@@ -179,4 +194,18 @@ func TestAsUID0ARefusedNamespaceSaysToPutNoNetworkFirst(t *testing.T) {
 func TestAnUnreadableNetworkNamespaceLinkRefusesTheGuard(t *testing.T) {
 	t.Parallel()
 	refused(t, refusalNoLink)
+}
+
+// Planted failure: a containedVar that drifts from contain's containVar leaves a uid 0 caller that put
+// contain first told of a seccomp profile, and the order unsaid. Risk: none; a file of the repository
+// is read.
+func TestTheContainMarkerNoNetworkReadsIsContainsOwn(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("contain/contain.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "const containVar = " + strconv.Quote(containedVar) + "\n"; !strings.Contains(string(b), want) {
+		t.Errorf("contain/contain.go does not hold %q: NoNetwork's containedVar is not contain's marker", want)
+	}
 }

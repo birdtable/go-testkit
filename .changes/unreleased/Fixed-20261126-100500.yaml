@@ -1,3 +1,3 @@
 kind: Fixed
-body: 'NoNetwork''s doc says what a uid 0 caller''s tests hold on Linux, every capability of the nested user namespace and none over the network namespace, and that NoNetwork goes before contain.Contain; as uid 0 the other order''s refusal says so.'
+body: 'NoNetwork''s doc says what a uid 0 caller''s tests hold on Linux, every capability of the nested user namespace and none over the network namespace, and that NoNetwork goes before contain.Contain. As uid 0, a refusal of the namespace inside contain''s containment says to put NoNetwork first, and one outside it names a container''s seccomp profile, which refuses a new user namespace, never an option the caller did not pass.'
 time: 2026-11-26T10:05:00.000000+01:00
