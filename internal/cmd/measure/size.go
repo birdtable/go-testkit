@@ -125,7 +125,11 @@ import (
 // the read for removable code took out 35 lines (unreachable error branches, a helper the standard
 // library has, a guard that guarded nothing and the two one-system open files), and the one hit for
 // UTF-16's two byte orders added 10.
-const Ceiling = 7304
+//
+// Raised by 11 to 7315, by measure, for readGoMod (main.go, 11): baseWork's two go.mod reads go
+// through one function that reads by filepath.Clean and returns nothing on an error, as before, so
+// the two lines need no nolint directive.
+const Ceiling = 7315
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
