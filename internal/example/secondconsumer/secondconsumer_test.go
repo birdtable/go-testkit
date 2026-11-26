@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/birdtable/go-testkit"
+	"github.com/birdtable/go-testkit/canary"
 	"github.com/birdtable/go-testkit/fake"
 )
 
@@ -29,6 +30,9 @@ const (
 	sweepCode   = 23  // the code the consumer's stand-in ends with
 	childLimit  = 30 * time.Second
 	standIn     = "./internal/example/secondconsumer/sweep" // the consumer's own stand-in, by its folder in the module
+	keyName     = "sc-api-key"                              // the name the consumer plants its own key under
+	badge       = "tkcanary-sc-badge-0001"                  // a planted value in the consumer's own format, with the canary prefix, which New would not make
+	logPlace    = "sync log"                                // the place the consumer names its captured log
 )
 
 // say writes s to a Rerun child's stdout, which the Rerun that started it reads.
@@ -168,4 +172,40 @@ func run(t *testing.T, path, dir string, args ...string) (int, string) {
 		t.Fatalf("%s did not end within %s: stderr %q", path, childLimit, stderr.String())
 	}
 	return cmd.ProcessState.ExitCode(), stdout.String()
+}
+
+// caught is a testing.TB that keeps the lines a check fails with, so a row can plant a hit and read
+// what the canary said of it without failing.
+type caught struct {
+	testing.TB
+	lines []string
+}
+
+func (c *caught) Helper() {}
+func (c *caught) Errorf(format string, args ...any) {
+	c.lines = append(c.lines, fmt.Sprintf(format, args...))
+}
+
+// The canary plants the consumer's own key, in a format of its own, under the consumer's name, hands
+// it back unchanged, and names the consumer's name and place on a hit, never the key.
+//
+// What it costs when this fails: a consumer whose program takes a key of a set format cannot plant
+// one, or a hit names a value or a place of ours in place of the consumer's.
+func TestTheCanaryPlantsTheConsumersOwnKeyAndNamesItsPlace(t *testing.T) {
+	t.Parallel()
+	c := &caught{TB: t}
+	s := canary.New(c, "session")
+	s.Own(keyName, badge)
+	if got := s.Get(keyName); got != badge {
+		t.Fatalf("Get of the consumer's key is %q, want the key it planted", got)
+	}
+	hits := s.Bytes(logPlace, []byte("sync: auth="+badge+"\n"))
+	want := []canary.Hit{{Name: keyName, Check: canary.CheckBytes, Place: logPlace, Offset: int64(len("sync: auth=")), Encoding: canary.Raw, Count: 1}}
+	if !slices.Equal(hits, want) {
+		t.Errorf("the hits of the consumer's key in its log are %+v, want %+v", hits, want)
+	}
+	said := strings.Join(c.lines, "\n")
+	if !strings.Contains(said, fmt.Sprintf("canary: the planted %q is in %q", keyName, logPlace)) || strings.Contains(said, badge) {
+		t.Errorf("the canary said %q, want the consumer's name and place and never its key", said)
+	}
 }
