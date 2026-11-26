@@ -1,0 +1,3 @@
+kind: Changed
+body: 'cmd/apigate: check 2 reads a module in a folder whose go.mod at the base requires the repository''s root through a workspace of the base''s own, written from the base''s go.mod files: the base''s root and the module, the root at the version the module requires replaced by the base''s root. It takes no flag. contain''s task contain-api runs cmd/apigate through CONTAIN_WORK''s workspace, and gate/api.sh is gone.'
+time: 2026-11-26T07:28:46.458153+01:00

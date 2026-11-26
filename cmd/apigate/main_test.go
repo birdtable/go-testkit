@@ -575,6 +575,142 @@ func TestTheGateBeforeTheHeadTakesTheNewestTagThatIsNotOnTheHead(t *testing.T) {
 	})
 }
 
+// rootSub plants the module example.com/m/sub in the folder sub, which requires the root,
+// example.com/m, at v0.1.0, a version no proxy has, and calls m.A: it builds only where the root is
+// the tree's own, through a workspace. It holds the func Read, its own api files, and the funcs given in
+// more.
+func rootSub(r *repo, more string) {
+	r.write(map[string]string{
+		"sub/go.mod":          "module example.com/m/sub\n\n" + goLine(r.t) + "\n\nrequire example.com/m v0.1.0\n",
+		"sub/sub.go":          "// Package sub is a module in a folder that requires the root.\npackage sub\n\nimport \"example.com/m\"\n\n// Read reads.\nfunc Read() int { return m.A() }\n" + more,
+		"sub/api/systems.txt": "# The lines by which the systems differ.\n",
+		"sub/api/marks.txt":   "# The marks.\n",
+	})
+}
+
+// headWork writes the workspace the head of a repository rootSub planted is read through, as
+// contain's CONTAIN_WORK writes the head's: the top and sub, with the root at v0.1.0 replaced by the
+// top. It is the file's path. go matches the folder it runs in with the use lines as strings: it
+// takes that folder by its real path, macOS's temporary folder is reached through a link, and an
+// absolute use line is kept as written, so a slash line never prefixes a Windows folder. So the
+// repository is read at its real path from then on, and the file is in the top, untracked, with
+// paths relative to it, which go joins to the real path in the system's own form.
+func headWork(r *repo) string {
+	r.t.Helper()
+	top, err := filepath.EvalSymlinks(r.dir)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	r.dir = top
+	work := filepath.Join(top, "go.work")
+	content := goLine(r.t) + "\n\nuse (\n\t.\n\t./sub\n)\n\nreplace example.com/m v0.1.0 => ./\n"
+	if err := os.WriteFile(work, []byte(content), 0o600); err != nil {
+		r.t.Fatal(err)
+	}
+	return work
+}
+
+// A module in a folder that requires the root of its own tree is read at its base through a workspace
+// the gate writes from the base's go.mod files, and at its head through the caller's: each check is
+// red under its break there, and green on a tree its files describe. Each row's base has the root at
+// a version no proxy has, so a base read with GOWORK=off stops the gate before any line a row wants.
+// The rows set GOWORK, the head's workspace, for the gate as CONTAIN_WORK does, so they run one at a
+// time.
+func TestAModuleThatRequiresItsRootIsReadThroughAWorkspaceAtTheBaseAndTheHead(t *testing.T) {
+	breaksRed := "api: the breaks since sub/v0.1.0 are not api/breaks/v0.1.0.txt (- the file, + apidiff); a commit that removes or changes an exported name adds apidiff's line there"
+	for _, row := range []gateRow{
+		{
+			name: "a name one system alone has",
+			tree: func(r *repo) {
+				rootSub(r, "")
+				r.commit("sub/v0.1.0")
+				r.write(map[string]string{"sub/w_windows.go": "package sub\n\n// WinOnly is Windows' alone.\nfunc WinOnly() int { return 3 }\n"})
+				r.commit()
+			},
+			code: 1,
+			lines: []string{
+				"+windows\t- WinOnly: added",
+				"api: the systems' surfaces are not what api/systems.txt says (- the file, + apidiff from darwin to each system)",
+				"api: the breaks since sub/v0.1.0 are the 0 lines of api/breaks/v0.1.0.txt",
+			},
+		},
+		{
+			name: "an exported name removed since the tag with no line in api/breaks/<tag>.txt",
+			tree: func(r *repo) {
+				rootSub(r, "\n// Write writes.\nfunc Write() {}\n")
+				r.commit("sub/v0.1.0")
+				rootSub(r, "")
+				r.commit()
+			},
+			code: 1,
+			lines: []string{
+				"api: the three systems' surfaces differ only as api/systems.txt says",
+				"+- Write: removed",
+				breaksRed,
+			},
+		},
+		{
+			name: "a line api/breaks/<tag>.txt keeps for a break the tree does not make",
+			tree: func(r *repo) {
+				rootSub(r, "")
+				r.commit("sub/v0.1.0")
+				r.write(map[string]string{"sub/api/breaks/v0.1.0.txt": "- Write: removed\n"})
+				r.commit()
+			},
+			code:  1,
+			lines: []string{"-- Write: removed", breaksRed},
+		},
+		{
+			name: "a mark naming a name go doc does not find",
+			tree: func(r *repo) {
+				rootSub(r, "")
+				r.commit("sub/v0.1.0")
+				r.write(map[string]string{"sub/api/marks.txt": "# The marks.\n.\tGone\tstable\n"})
+				r.commit()
+			},
+			code: 1,
+			lines: []string{
+				"api: the breaks since sub/v0.1.0 are the 0 lines of api/breaks/v0.1.0.txt",
+				"api: api/marks.txt marks . Gone, which go doc does not find",
+			},
+		},
+		{
+			name: "a tree its files describe",
+			tree: func(r *repo) {
+				rootSub(r, "\n// Write writes.\nfunc Write() {}\n")
+				r.commit("sub/v0.1.0")
+				rootSub(r, "")
+				r.write(map[string]string{
+					"sub/api/breaks/v0.1.0.txt": "- Write: removed\n",
+					"sub/api/marks.txt":         "# The marks.\n.\tRead\tstable\n",
+				})
+				r.commit()
+			},
+			lines: []string{
+				"api: the three systems' surfaces differ only as api/systems.txt says",
+				"api: the breaks since sub/v0.1.0 are the 1 lines of api/breaks/v0.1.0.txt",
+				"api: api/marks.txt marks 1 names other than experimental",
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			r := plant(t)
+			row.tree(r)
+			t.Setenv("GOWORK", headWork(r))
+			code, out := r.gate("sub")
+			have := strings.Split(out, "\n")
+			for _, want := range row.lines {
+				if !slices.Contains(have, want) {
+					t.Errorf("the gate's output holds no line %q:\n%s", want, out)
+				}
+			}
+			if code != row.code {
+				t.Errorf("the gate exits %d, want %d:\n%s", code, row.code, out)
+			}
+		})
+	}
+}
+
 // The gate takes -dir and -before-head alone, and exits 2 for anything else, before it reads a file.
 func TestTheGateTakesDirAndBeforeHeadAloneAndExitsTwoOtherwise(t *testing.T) {
 	t.Parallel()
