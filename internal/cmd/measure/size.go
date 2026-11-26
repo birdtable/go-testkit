@@ -114,7 +114,11 @@ import (
 // go.mod files, by go work init and edit, so contain's gate leaves gate/api.sh; modulePath, required
 // and fields read a go.mod's module and require lines with the standard library alone, as the root
 // takes nothing else; the gate's folder is taken by its real path; and check 2's doc says it.
-const Ceiling = 6770
+//
+// Raised by 11 to 6781, by measure, for readGoMod (main.go, 11): baseWork's two go.mod reads go
+// through one function that reads by filepath.Clean and returns nothing on an error, as before, so
+// the two lines need no nolint directive.
+const Ceiling = 6781
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
