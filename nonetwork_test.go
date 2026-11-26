@@ -281,7 +281,7 @@ func TestIsolateGivenNoNetworkReturnsAnErrorAndChangesNothing(t *testing.T) {
 	home := os.Getenv("HOME")
 	for _, opts := range [][]Option{{NoNetwork()}, {Keep("GOWORK"), Options(NoNetwork(hostOS()))}} {
 		restore, err := Isolate(opts...)
-		if err == nil || restore != nil || !strings.Contains(err.Error(), "NoNetwork is an option of Main") {
+		if err == nil || restore != nil || !strings.Contains(err.Error(), "Isolate was given NoNetwork, an option of Main") {
 			if restore != nil {
 				_ = restore()
 			}

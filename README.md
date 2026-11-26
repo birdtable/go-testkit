@@ -119,7 +119,9 @@ code, err := testkit.Main(m, testkit.NoNetwork())
 A dial to any other address fails with an error that names it, and an `httptest` server works.
 Main sets the guard before any test runs, and proves it: a connect to `192.0.2.1:9` must be refused
 by the guard, and one to a listener on `127.0.0.1` must succeed. `NoNetwork` is an option of `Main`
-alone: `Isolate` runs no `Before`, so given one it returns an error and isolates nothing. On macOS the guard is the system
+alone: `Isolate` runs no `Before`, so given one it returns an error and isolates nothing, and `Build`
+and `BuildAt` refuse it too. All three refuse a `Before`, a containment's among them, as only `Main`
+runs one, and `Build` and `BuildAt` refuse a `RerunEnv`, as only a `Rerun` calls one. On macOS the guard is the system
 sandbox, set on the test process with `sandbox_init`. On Linux the test binary reruns in a user and
 network namespace of its own, with only loopback up, and every start of the test binary inside it,
 a fuzz worker or a helper child started by `os/exec`, stays inside. The guard is tested on macOS arm64 and Linux
@@ -133,7 +135,8 @@ stderr saying so, and runs them. The refusals:
 | Refusal | Where | Main's error says | Test |
 |---|---|---|---|
 | A name in `NoNetwork(...)` that is no GOOS | every system | `"macos", which is no GOOS` | `TestNoNetworkRefusesANameThatIsNoGOOS` |
-| `NoNetwork` given to `Isolate`, which runs no `Before` | every system | Isolate's error: `NoNetwork is an option of Main` | `TestIsolateGivenNoNetworkReturnsAnErrorAndChangesNothing` |
+| `NoNetwork` given to `Isolate`, which runs no `Before` | every system | Isolate's error: `Isolate was given NoNetwork, an option of Main` | `TestIsolateGivenNoNetworkReturnsAnErrorAndChangesNothing`, `TestAMainOnlyOptionGivenToIsolateBuildOrBuildAtIsRefusedNamingIt` |
+| `NoNetwork` or a `Before` given to `Isolate`, `Build` or `BuildAt`, or a `RerunEnv` to `Build` or `BuildAt`, alone or inside `Options` | every system | not Main's: Isolate's error, the Binary's `Run` on Stderr, or BuildAt's failure of the test, `<function> was given <option>, an option of Main` and `give it to Main` | `TestAMainOnlyOptionGivenToIsolateBuildOrBuildAtIsRefusedNamingIt` |
 | The system has no guard | Windows, and all but macOS and Linux | `Windows gives an unprivileged process no way to refuse outbound connections and keep loopback` | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
 | The process already runs in a sandbox | macOS (`sandbox-exec`, an agent's sandboxed shell) | `sandbox_init refused the profile`, and that the process already runs inside a sandbox | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
 | The host refuses an unprivileged user namespace | Linux | `the system refused the namespace` | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |

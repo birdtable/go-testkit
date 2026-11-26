@@ -28,7 +28,7 @@ import (
 type Binary struct {
 	key        buildKey
 	opts       []Option
-	refusedPkg error             // why Build refused its package; kept by every copy, and such a Binary never runs go
+	refusedPkg error             // why Build refused its package or an option; kept by every copy, and such a Binary never runs go
 	vars       map[string]string // each -X: the variable X named and the value it set
 	refused    error             // why X refused a name or a value; kept by every copy, and such a Binary never runs go
 	dir        string            // the folder Dir gave its runs; empty is the test process's own
@@ -40,11 +40,15 @@ type Binary struct {
 // relative path is read from the module the test runs in, so a package names it the same from any
 // test folder. opts change the environment a run of the binary sees, over the test's own. A pkg that
 // starts with -, which go build would read as a flag, is refused as a refused X is, and
-// so is every copy X and Trimpath make of it.
+// so is every copy X and Trimpath make of it. So are opts that hold an option only Main acts on,
+// NoNetwork, Before or RerunEnv, which a run of the binary would ignore; the refusal names it.
 func Build(pkg string, opts ...Option) *Binary {
 	if strings.HasPrefix(pkg, "-") {
 		return &Binary{key: buildKey{pkg: pkg}, opts: opts, refusedPkg: fmt.Errorf(
 			"testkit: Build refuses a package that starts with -, which go build would read as a flag: %q", pkg)}
+	}
+	if err := mainOnly("Build", opts); err != nil {
+		return &Binary{key: buildKey{pkg: pkg}, opts: opts, refusedPkg: fmt.Errorf("testkit: %w", err)}
 	}
 	return &Binary{key: buildKey{pkg: resolve(pkg)}, opts: opts}
 }
