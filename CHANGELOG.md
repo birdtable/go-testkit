@@ -17,6 +17,12 @@ Nothing changes for a test: every name gives what it gave. A module can add one 
 ### Added
 * `RequireMain`, a check for one test at the module root: it lists the module's packages with `go list` for darwin, linux and windows, and fails each package with tests whose `TestMain` is missing, left out on a system, or does not call `Main` itself, naming the package, the systems and the reason. A package opts out with a `//testkit:unisolated` line and its reason, which is logged on every run.
 
+### contain/v0.1.3
+* contain requires `github.com/birdtable/go-testkit` v0.5.0 in place of v0.3.1, so a module that requires contain/v0.1.3 takes go-testkit v0.5.0 or later. A test at contain's root now calls `RequireMain`, so a package of contain's whose tests do not run under testkit's `Main` fails. No exported name, signature or behaviour changes: contain's API is v0.1.2's, and its other require, `kernel.org/pub/linux/libs/security/libcap/cap` v1.2.78, is unchanged. Its README names v0.5.0.
+
+### taskfile/v0.1.2
+* taskfile requires `github.com/birdtable/go-testkit` v0.5.0, for its tests alone: its own code still imports only the standard library, `go.yaml.in/yaml/v3` v3.0.6 and `mvdan.cc/sh/v3` v3.14.1, which are unchanged. A module that requires taskfile/v0.1.2 takes go-testkit v0.5.0 or later. taskfile's tests now run under testkit's `Main`, where a go they start fetches nothing, where before they ran with no `TestMain`, and a test at its root calls `RequireMain`, so a package of taskfile's whose tests do not run under `Main` fails. No exported name, signature or behaviour changes: taskfile's API is v0.1.1's.
+
 ## v0.4.0 - 2026-11-26
 
 Two names are added to the root module: `BuildAt` and `NoNetwork`. No name is removed or moved, and no signature changes: the API check finds no break since v0.3.1. Every name added is experimental, as every name of the module is. The root still imports the standard library only, and no require in any go.mod changes. contain stays at contain/v0.1.2 and taskfile at taskfile/v0.1.1: nothing in either module has changed since those tags. The tagged tree is 6,239 non-test Go lines outside `internal/` (`task size`), at its ceiling of 6,239, up 1,005 from v0.3.1's 5,234, all in the root: 363 for `BuildAt`, 612 for `NoNetwork` and 30 for the refusal of options only `Main` acts on. The full release checks ran on macOS (arm64) at the tagged commit; vet and the tests, with the race detector, ran on Linux, macOS and Windows at the tagged commit in CI. No full release checks ran on Linux or Windows for this release.
