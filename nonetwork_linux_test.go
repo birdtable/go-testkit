@@ -15,6 +15,7 @@ const (
 	refusalLoopback = "loopback" // an interface there is none of, so the root cannot bring it up
 	refusalSameNet  = "samenet"  // a user namespace with no network namespace: a weakened guard
 	refusalUpLink   = "uplink"   // an interface up and not loopback beside the namespace's own
+	refusalNoLink   = "nolink"   // the tests' link to their network namespace cannot be read
 	seamDownTunnel  = "tunnel"   // a tunnel interface that is down, as a host's modules leave one: no refusal
 )
 
@@ -27,6 +28,9 @@ const (
 // missingLink is the interface refusalLoopback brings up, which no namespace has.
 const missingLink = "testkit-none0"
 
+// missingNetLink is the link refusalNoLink has the tests read, which names no namespace.
+const missingNetLink = "/proc/self/ns/testkit-none"
+
 // forceRefusal makes this process's guard fail as refusal says, by the seams of nonetwork_linux.go,
 // each of which can only make it fail.
 func forceRefusal(refusal string) {
@@ -37,6 +41,8 @@ func forceRefusal(refusal string) {
 		guardCloneflags = syscall.CLONE_NEWUSER
 	case refusalUpLink:
 		extraInterfaces = []net.Interface{{Index: 1000, Name: upLink, Flags: net.FlagUp | net.FlagRunning}}
+	case refusalNoLink:
+		runNetLink = missingNetLink
 	case seamDownTunnel:
 		extraInterfaces = []net.Interface{{Index: 1000, Name: downTunnel, Flags: 0}}
 	default:
@@ -56,6 +62,8 @@ func refusalWords(refusal string) []string {
 		return []string{"the new network namespace is the one the run started in"}
 	case refusalUpLink:
 		return []string{"an interface that is not loopback is up in the guard's network namespace: " + upLink}
+	case refusalNoLink:
+		return []string{"the network namespace the tests run in cannot be read", missingNetLink}
 	}
 	return []string{"the system refused the namespace"}
 }
@@ -163,4 +171,12 @@ func TestAsUID0ARefusedNamespaceSaysToPutNoNetworkFirst(t *testing.T) {
 			t.Errorf("the refusal of %v as uid %d says %q; want the system's error, and %q said: %v", tc.err, tc.uid, why, first, tc.says)
 		}
 	}
+}
+
+// Planted failure: tests that cannot read which network namespace they run in, and start the
+// namespaces again, nest without end; ones that run on unchecked may run beside a way out; a refusal
+// that does not name the link leaves the caller to guess. Risk: none past the guard's own.
+func TestAnUnreadableNetworkNamespaceLinkRefusesTheGuard(t *testing.T) {
+	t.Parallel()
+	refused(t, refusalNoLink)
 }

@@ -36,12 +36,14 @@ const netLink = "/proc/self/ns/net"
 
 // The seams of testkit's own tests of a refusal, each written only by them, before Main, and each able
 // only to make the guard fail: guardCloneflags the namespaces the root is made in, loopbackName the
-// interface it brings up, and extraInterfaces those wayOut sees beside the system's, which can only add
-// one and so never hide one of the system's.
+// interface it brings up, extraInterfaces those wayOut sees beside the system's, which can only add
+// one and so never hide one of the system's, and runNetLink the link the tests read to learn where they
+// run, which a test names a link of no namespace by.
 var (
 	extraInterfaces []net.Interface                                                //nolint:gochecknoglobals // a test adds an interface the namespace does not hold
 	guardCloneflags uintptr         = syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET //nolint:gochecknoglobals // a refusal's test writes flags the system refuses
 	loopbackName                    = "lo"                                         //nolint:gochecknoglobals // a refusal's test writes an interface there is none of
+	runNetLink                      = netLink                                      //nolint:gochecknoglobals // a refusal's test writes a link of no namespace
 )
 
 // guardedFrom is the network namespace this run started in, set once the probe passed in a run that is
@@ -54,7 +56,12 @@ func guardHere(start []string) (code int, done bool, why string, err error) {
 	part, arg, _ := strings.Cut(lookup(start, guardVar), ":")
 	switch part {
 	case guardRun:
-		if here, err := os.Readlink(netLink); err == nil && arg != "" && here != arg {
+		here, err := os.Readlink(runNetLink)
+		if err != nil {
+			// The guard cannot tell its own namespace from the run's, so it refuses and never nests again.
+			return 0, false, "the network namespace the tests run in cannot be read: " + err.Error(), nil
+		}
+		if arg != "" && here != arg {
 			// The guard's own namespace, or one like it: its tests run, or refuse, and never nest again.
 			if why := wayOut(); why != "" {
 				return 0, false, why, nil

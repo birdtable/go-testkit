@@ -70,7 +70,11 @@ import (
 // Raised by 15 to 6038, by measure, for NoNetwork beside contain as uid 0: NoNetwork's doc says what a
 // uid 0 caller's tests hold and that NoNetwork goes first (4), and namespaceRefused, the refusal's
 // wording, says so to a uid 0 caller refused with no permission (nonetwork_linux.go, 11).
-const Ceiling = 6038
+//
+// Raised by 7 to 6045, by measure, for tests that cannot read their network namespace on Linux: the run
+// refuses, naming the link and its error, rather than nest again, and runNetLink is the seam its test
+// names a link of no namespace by (nonetwork_linux.go).
+const Ceiling = 6045
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
