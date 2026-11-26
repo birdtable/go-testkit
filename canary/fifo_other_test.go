@@ -42,7 +42,7 @@ func TestFilesReadsNoFIFOSwappedInAfterTheWalk(t *testing.T) {
 		}
 		done := make(chan result, 1)
 		go func() {
-			hits, err := s.file(root, "swapped")
+			hits, _, err := s.file(root, "swapped", nil)
 			done <- result{hits, err}
 		}()
 		select {

@@ -6,7 +6,9 @@
 // a support bundle among them; its stdout and stderr; and the String, Error and %+v of a value it
 // returned. Files reads each file's and folder's path below the folder too, and each link's target
 // as text, and Zip each entry's name and comment and the archive's comment: a program that names a
-// file or a folder after a token, or points a link at it, has written it there.
+// file or a folder after a token, or points a link at it, has written it there. A file that must
+// hold a value, an app's own secrets file, is named by Expect: Files then takes that value in that
+// file's bytes for no failure, and fails the test if it is not there.
 //
 // Each check looks for each value as it is and re-encoded on the way out: as hex in both cases, as
 // standard and URL-safe base64 at each of the three alignments a value can have in a longer encoded
@@ -55,8 +57,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
+	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -315,6 +320,70 @@ func escapeRE() *regexp.Regexp { return regexp.MustCompile(`%[0-9A-F]{2}`) }
 // A zip archive it reads as raw bytes, like any file: Zip reads its entries.
 func (s *Set) Files(dir string) []Hit {
 	s.t.Helper()
+	return s.files(dir, nil)
+}
+
+// Expected is a check of one folder in which values are expected, each in files the test names: an
+// app's own secrets file, which must hold its token. It is made by Expect and checks by Files.
+type Expected struct {
+	s     *Set
+	paths []string            // each path named, cleaned, in the order named
+	names map[string][]string // the names whose values are expected in each path
+}
+
+// Expect is a check of one folder in which the value planted as name must be in each of paths, the
+// rest of the folder held to Files' rules. Each path is relative to the folder its Files is given,
+// cleaned, and names one regular file, with no globs. The Expected's Files then excuses a hit of that
+// value, in any encoding, in the bytes of each path named for it, and that alone: the value in the
+// path itself, a file's or a folder's name, in a link's target or in any other file, and any other
+// value in the expected file, are hits as before. A path that names nothing, a folder, a link or no
+// regular file fails the test, and so does a path whose bytes do not hold the value, so no check
+// passes because a path was named. Only the Expected's Files excuses anything: the Set's own Files
+// and Zip, Reader, Bytes and Value do not take it. An unknown name, no path, a path that is absolute or
+// leaves the folder, and a path named twice for one name stop the test.
+func (s *Set) Expect(name string, paths ...string) *Expected {
+	s.t.Helper()
+	return (&Expected{s: s, names: map[string][]string{}}).Expect(name, paths...)
+}
+
+// Expect adds the value planted as name, expected in each of paths, to e, as Set's Expect does, and is
+// e: a file may be expected to hold more than one value.
+func (e *Expected) Expect(name string, paths ...string) *Expected {
+	e.s.t.Helper()
+	if _, ok := e.s.values[name]; !ok {
+		e.s.fatalf("canary: Expect of %q, which no value was planted under", name)
+	}
+	if len(paths) == 0 {
+		e.s.fatalf("canary: Expect of %q names no path", name)
+	}
+	for _, p := range paths {
+		c := path.Clean(filepath.ToSlash(p))
+		if p == "" || c == "." || filepath.IsAbs(p) || !fs.ValidPath(c) {
+			e.s.fatalf("canary: Expect of %q refuses the path %q: it names no file below the folder", name, p)
+		}
+		if slices.Contains(e.names[c], name) {
+			e.s.fatalf("canary: Expect of %q names the path %q twice", name, c)
+		}
+		if _, ok := e.names[c]; !ok {
+			e.paths = append(e.paths, c)
+		}
+		e.names[c] = append(e.names[c], name)
+	}
+	return e
+}
+
+// Files checks every file under dir as Set's Files does, and is the hits but those Expect excused: a
+// hit of an expected value in the bytes of a path named for it. Each expected path that names no
+// regular file under dir fails the test, and so does each expected value its path's bytes do not hold
+// in any encoding, naming the value's name and the path, never the value.
+func (e *Expected) Files(dir string) []Hit {
+	e.s.t.Helper()
+	return e.s.files(dir, e)
+}
+
+// files is Files of dir, with the values e expects excused in their paths' bytes when e is not nil.
+func (s *Set) files(dir string, e *Expected) []Hit {
+	s.t.Helper()
 	s.begin(CheckFiles)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -326,6 +395,7 @@ func (s *Set) Files(dir string) []Hit {
 			s.errorf("canary: Files cannot close the folder %q: %v", dir, err)
 		}
 	}()
+	want, seen := s.expected(root, dir, e), map[string][]string{}
 	var hits []Hit
 	_ = fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error { //nolint:errcheck // the callback ends nil on every path, so WalkDir does
 		if err != nil {
@@ -344,7 +414,7 @@ func (s *Set) Files(dir string) []Hit {
 				found, err = nil, nil
 			}
 		case d.Type().IsRegular():
-			found, err = s.file(root, rel)
+			found, seen[rel], err = s.file(root, rel, want[rel])
 		}
 		if err != nil {
 			s.errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
@@ -352,7 +422,40 @@ func (s *Set) Files(dir string) []Hit {
 		hits = append(hits, found...)
 		return nil
 	})
+	for _, p := range slices.Sorted(maps.Keys(want)) {
+		for _, name := range want[p] {
+			if !slices.Contains(seen[p], name) {
+				s.errorf("canary: the planted %q is expected in %q under %q (Files) and is not there", name, p, dir)
+			}
+		}
+	}
 	return hits
+}
+
+// expected is each path e expects that names a regular file beneath root, with the names expected in
+// it; each other path fails the test, naming it. It is nil when e is.
+func (s *Set) expected(root *os.Root, dir string, e *Expected) map[string][]string {
+	s.t.Helper()
+	if e == nil {
+		return nil
+	}
+	want := map[string][]string{}
+	for _, p := range e.paths {
+		info, err := root.Lstat(filepath.FromSlash(p))
+		switch {
+		case err != nil:
+			s.errorf("canary: Files expects %q under %q, which names nothing: %v", p, dir, err)
+		case info.IsDir():
+			s.errorf("canary: Files expects %q under %q, which is a folder", p, dir)
+		case info.Mode()&fs.ModeSymlink != 0:
+			s.errorf("canary: Files expects %q under %q, which is a link", p, dir)
+		case !info.Mode().IsRegular():
+			s.errorf("canary: Files expects %q under %q, which is no regular file", p, dir)
+		default:
+			want[p] = e.names[p]
+		}
+	}
+	return want
 }
 
 // inName is the hits in name, a slash-separated path, that end past its first above bytes, which
@@ -427,24 +530,34 @@ func (s *Set) target(root *os.Root, rel string) ([]Hit, error) {
 }
 
 // file is the hits in the file rel beneath root, reported as Files found them, none when rel is no
-// longer a regular file by the time it is open.
-func (s *Set) file(root *os.Root, rel string) ([]Hit, error) {
+// longer a regular file by the time it is open, but those of the values named in expected, whose
+// names it gives apart: the values found that the file was expected to hold.
+func (s *Set) file(root *os.Root, rel string, expected []string) ([]Hit, []string, error) {
 	s.t.Helper()
 	// O_NONBLOCK opens a FIFO swapped in since the walk at once, in place of waiting for a writer.
 	// Windows has no FIFO in a folder, and its open reads nothing of the bit.
 	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var hits []Hit
+	var seen []string
 	info, err := f.Stat()
 	if err == nil && info.Mode().IsRegular() {
-		hits, err = s.scan(CheckFiles, rel, f)
+		hits, err = s.read(CheckFiles, rel, f)
+		hits = slices.DeleteFunc(hits, func(h Hit) bool {
+			if slices.Contains(expected, h.Name) {
+				seen = append(seen, h.Name)
+				return true
+			}
+			return false
+		})
+		s.report(hits)
 	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
-	return hits, err
+	return hits, seen, err
 }
 
 // Zip checks each entry of the zip archive at path, as Files checks a file: its name, a hit there at
@@ -569,6 +682,13 @@ func (s *Set) Value(place string, v any) []Hit {
 // read's io.ErrUnexpectedEOF and an io.EOF wrapped in another among them, is its error.
 func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 	s.t.Helper()
+	hits, err := s.read(check, place, r)
+	s.report(hits)
+	return hits, err
+}
+
+// read is scan's hits and error, not yet reported.
+func (s *Set) read(check, place string, r io.Reader) ([]Hit, error) {
 	tail := s.longest
 	buf := make([]byte, tail+s.chunk)
 	kept := 0
@@ -583,7 +703,6 @@ func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 			break
 		}
 		if err != nil {
-			s.report(tl.hits)
 			return tl.hits, err
 		}
 		keep := min(tail, len(data))
@@ -591,7 +710,6 @@ func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 		tl.base += int64(len(data) - keep)
 		kept = keep
 	}
-	s.report(tl.hits)
 	return tl.hits, nil
 }
 
