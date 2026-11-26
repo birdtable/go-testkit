@@ -18,7 +18,11 @@
 //     the head and does not point at it, the run at v0.2.0 holding the breaks since v0.1.0, and a
 //     head whose only tags are its own has none, as with no tag. The base's tree is written out of the
 //     repository by git checkout-index, through an index of the gate's own, and read at the module's
-//     folder with GOWORK=off. apidiff -incompatible from the base's export data to the head's, per
+//     folder with GOWORK=off, unless the module is in a folder and its go.mod there requires the
+//     module the base's top go.mod names, the repository's root. Then the base is read through a
+//     workspace of its own, which the gate writes from those two go.mod files: the base's root and
+//     the module, the root at the version the module requires replaced by the base's root. The head
+//     is read in the caller's environment, through the workspace its GOWORK names. apidiff -incompatible from the base's export data to the head's, per
 //     system, the three joined, sorted bytewise and each line once, equals api/breaks/<version>.txt
 //     byte for byte (the base's version alone in the name), or nothing where that file is not there.
 //     So a break with no line is red, and so is a line for a break the tree does not make. Without
@@ -142,6 +146,11 @@ func (g *gate) run() (red bool, err error) {
 		return false, errStop
 	}
 	g.tmp = tmp
+	// By its real path: go matches the folder it runs in with a workspace's use lines, and macOS's
+	// temporary folder is reached through a link (/var is /private/var).
+	if real, err := filepath.EvalSymlinks(tmp); err == nil {
+		g.tmp = real
+	}
 	defer func() {
 		if err := os.RemoveAll(tmp); err != nil {
 			g.say("api: the gate's own folder %s could not be removed: %v", tmp, err)
@@ -309,9 +318,13 @@ func (g *gate) breaks() (bool, error) {
 		return false, errStop
 	}
 	old := filepath.Join(g.path("old"), filepath.FromSlash(g.folder))
+	env, ok := g.baseWork(old)
+	if !ok {
+		return false, errStop
+	}
 	var got []string
 	for _, goos := range systems {
-		if !g.exportData(old, goos, "old-"+goos+".exp", []string{"GOWORK=off"}) {
+		if !g.exportData(old, goos, "old-"+goos+".exp", env) {
 			g.say("api: apidiff cannot write %s's export data for %s", base, goos)
 			return false, errStop
 		}
@@ -350,6 +363,78 @@ func (g *gate) breaks() (bool, error) {
 	g.diff(wantPath, g.path("breaks.got"))
 	g.say("api: the breaks since %s are not %s (- the file, + apidiff); a commit that removes or changes an exported name adds apidiff's line there", base, declared)
 	return true, nil
+}
+
+// baseWork is the environment check 2 reads the base's module in, at old: GOWORK=off, so the module's
+// own go.mod alone decides, unless the module is in a folder and its go.mod there requires the
+// module the base's top go.mod names, the repository's root. Then the base has a workspace of its
+// own, the gate's file old.work: the base's root and the module, with the root at the version the
+// module requires replaced by the base's root, as the head's workspace stands the head's root for
+// it. go work writes the file GOWORK names, so no workspace of the caller's is read or written. A
+// go.mod that cannot be read requires nothing here, and a module that needs the root then fails in
+// apidiff, red. ok is false where the workspace could not be written, its reason said.
+func (g *gate) baseWork(old string) (env []string, ok bool) {
+	if g.folder == "" {
+		return []string{"GOWORK=off"}, true
+	}
+	rootGoMod, _ := os.ReadFile(filepath.Join(g.path("old"), "go.mod")) //nolint:errcheck // a top with no go.mod is no root to require
+	modGoMod, _ := os.ReadFile(filepath.Join(old, "go.mod"))            //nolint:errcheck // a module with no go.mod requires nothing
+	root := modulePath(rootGoMod)
+	version := required(modGoMod, root)
+	if root == "" || version == "" {
+		return []string{"GOWORK=off"}, true
+	}
+	env = []string{"GOWORK=" + g.path("old.work")}
+	for _, args := range [][]string{{"work", "init", g.path("old"), old}, {"work", "edit", "-replace=" + root + "@" + version + "=" + g.path("old")}} {
+		if b, err := g.command(g.tmp, env, "go", args...).CombinedOutput(); err != nil {
+			g.write(b)
+			g.say("api: the workspace for the base, its root %s at %s, could not be written", root, version)
+			return nil, false
+		}
+	}
+	return env, true
+}
+
+// modulePath is the path a go.mod's module line names, or "" where it has none.
+func modulePath(gomod []byte) string {
+	for line := range strings.Lines(string(gomod)) {
+		if f := fields(line); len(f) == 2 && f[0] == "module" {
+			return f[1]
+		}
+	}
+	return ""
+}
+
+// required is the version at which a go.mod requires the module path, on a require line of its own or
+// in a require block, or "" where it does not.
+func required(gomod []byte, path string) string {
+	block := false
+	for line := range strings.Lines(string(gomod)) {
+		f := fields(line)
+		switch {
+		case block && len(f) == 1 && f[0] == ")":
+			block = false
+		case len(f) == 2 && f[0] == "require" && f[1] == "(":
+			block = true
+		case len(f) == 3 && f[0] == "require" && f[1] == path:
+			return f[2]
+		case block && len(f) == 2 && f[0] == path:
+			return f[1]
+		}
+	}
+	return ""
+}
+
+// fields are a go.mod line's words before its comment, each unquoted where it is quoted.
+func fields(line string) []string {
+	line, _, _ = strings.Cut(line, "//")
+	f := strings.Fields(line)
+	for i, w := range f {
+		if u, err := strconv.Unquote(w); err == nil {
+			f[i] = u
+		}
+	}
+	return f
 }
 
 // base is check 2's base: the last tag git describe finds from the head that matches the module's

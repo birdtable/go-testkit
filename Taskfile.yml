@@ -463,16 +463,19 @@ tasks:
           GOOS=linux "$bin" check ./... --allowed_licenses=BSD-2-Clause,BSD-3-Clause,MIT,Apache-2.0,ISC --ignore {{.LIBCAP}}/cap --ignore {{.LIBCAP}}/psx
         timeout: 10m
 
-  # contain-mod is the push tier's contain-vuln, run where contain/go.mod or contain/go.sum differ from
-  # the commit this branch shares with origin/main, or where git names none, as mod is the root's.
+  # contain-api runs cmd/apigate in contain's folder through CONTAIN_WORK's workspace, which reads the
+  # head with the root replaced by this tree's. Its tags are contain/v*, and its base is read through
+  # a workspace cmd/apigate writes from the base's go.mod files, with the root replaced by the base's.
   contain-api:
-    desc: the API gate of contain, gate/api.sh's, from contain/api/
+    desc: the API gate of contain, cmd/apigate's, from contain/api/
     cmds:
       - cmd: |
           {{.CONTAIN_WORK}}
-          mod=contain; . "{{.ROOT_DIR}}/gate/api.sh"
+          go run github.com/birdtable/go-testkit/cmd/apigate
         timeout: 2m
 
+  # contain-mod is the push tier's contain-vuln, run where contain/go.mod or contain/go.sum differ from
+  # the commit this branch shares with origin/main, or where git names none, as mod is the root's.
   contain-mod:
     desc: contain-vuln, where contain's go.mod or go.sum differ from main's; otherwise the release tier runs it
     cmds:
@@ -560,7 +563,8 @@ tasks:
         timeout: 10m
 
   # taskfile-api runs cmd/apigate from the root, whose tools/apidiff.mod it builds, with -dir naming
-  # taskfile's folder: its tags are taskfile/v*, and its base is read at taskfile/ with GOWORK=off.
+  # taskfile's folder: its tags are taskfile/v*. taskfile requires the root, so its base is read through
+  # a workspace cmd/apigate writes from the base's go.mod files, with the root replaced by the base's.
   taskfile-api:
     desc: the API gate of taskfile, cmd/apigate's, from taskfile/api/
     cmds:

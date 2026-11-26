@@ -108,7 +108,13 @@ import (
 // from the head's parents, each read by git describe and the nearest to the head taken by git
 // rev-list's count, so a gate run at its own tag holds the breaks since the tag before, with a line
 // for each way git fails there, and the docs of the flag and of check 2.
-const Ceiling = 6685
+//
+// Raised by 85 to 6770, by measure, for check 2's base workspace (main.go, 85): baseWork writes a
+// workspace for a module in a folder whose go.mod at the base requires the root, from the base's
+// go.mod files, by go work init and edit, so contain's gate leaves gate/api.sh; modulePath, required
+// and fields read a go.mod's module and require lines with the standard library alone, as the root
+// takes nothing else; the gate's folder is taken by its real path; and check 2's doc says it.
+const Ceiling = 6770
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

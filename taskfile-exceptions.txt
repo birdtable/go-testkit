@@ -17,4 +17,4 @@ contain-test	1	CONTAIN_WORK's workspace file, as contain-vet's, with hatch built
 contain-test-short	1	CONTAIN_WORK's workspace file, as contain-vet's, with hatch built for the root and run in contain/
 contain-vuln	1	CONTAIN_WORK's workspace file, as contain-vet's, with govulncheck built for the root and run in contain/
 contain-licenses	1	CONTAIN_WORK's workspace file, as contain-vet's, and awk finds a package under libcap's path whose module is not libcap/cap or libcap/psx, which go-licenses' prefix ignore would pass
-contain-api	1	CONTAIN_WORK's workspace file, as contain-vet's, which gate/api.sh reads for the head and writes again for the base
+contain-api	1	CONTAIN_WORK is shell, as contain-vet's: it writes the workspace file the head is read through and exports GOWORK, and cmd/apigate, run after it, writes the base's own

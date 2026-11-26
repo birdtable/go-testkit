@@ -1,3 +1,5 @@
-# What contain's cross-system gate expects (gate/api.sh): apidiff's report of darwin's
-# surface against each other system's, a line each, sorted. contain has the same surface on every
-# system, so the file has no line; a difference is red until a line here says the module means it.
+# The exported surface's differences between the systems that task contain-api holds (cmd/apigate):
+# apidiff's full report from darwin to linux and from darwin to windows, each line led by the system
+# and a tab, as task contain-api prints it on a red. A line here is a difference the module means to
+# have; any other is red, and so is a line here that no longer happens. Lines starting with # are not
+# compared. contain has the same surface on every system, so the file has no line.
