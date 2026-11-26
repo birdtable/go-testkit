@@ -3,5 +3,6 @@
 #
 # The second consumer's planted canary key, a fake in a format of its own, written as an assigned
 # value in the commit that added its row; the next commit renamed the constant so the rule no longer
-# matches it.
+# matches it. The line is for that branch's history: landed by squash, the commit is not on main, and
+# the line can go.
 2ffd624a31dc433330c5798116694b2c80815598:internal/example/secondconsumer/secondconsumer_test.go:assigned-secret-value:34

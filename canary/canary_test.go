@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"unicode/utf16"
 
 	"github.com/birdtable/go-testkit"
@@ -295,11 +296,12 @@ func TestAValueAcrossTwoReadsIsFoundOnceAtItsOffset(t *testing.T) {
 // TestATooPlainValueOrAClashingNameStopsTheTest: Own refuses a value under 16 bytes, one with fewer
 // than 8 distinct bytes, one a single byte of which is over a quarter, one that equals, holds or is
 // held in a value planted before, and any value once a check has run; New refuses an empty name and
-// a name given twice; Get refuses a name no value was planted under. Each stops the test, naming the
-// name and the rule, never the value.
+// a name given twice; Get refuses a name no value was planted under; a check refuses a Set with no
+// value planted. Each stops the test, naming the name and the rule, never the value.
 //
 // What it costs when this fails: a test plants a value that turns up by chance, a hit that cannot say
-// which value leaked, or a check that reads a Set that changed under it.
+// which value leaked, a check that reads a Set that changed under it, or a check of nothing that
+// passes whatever the program wrote.
 func TestATooPlainValueOrAClashingNameStopsTheTest(t *testing.T) {
 	t.Parallel()
 	long := "tkcanary-0123456789abcdef-wide"
@@ -318,6 +320,7 @@ func TestATooPlainValueOrAClashingNameStopsTheTest(t *testing.T) {
 		{"a name given twice", "", `canary: New was given the name "v" twice`, func(s *Set) { New(s.t, "v", "v") }},
 		{"a name given twice to Own", long, `canary: Own was given the name "token" twice`, func(s *Set) { s.Own("token", long) }},
 		{"Get of a name never planted", "", `canary: Get of "v", which no value was planted under`, func(s *Set) { s.Get("v") }},
+		{"a check on a Set with no value", "", "canary: Bytes on a Set with no value planted", func(s *Set) { New(s.t).Bytes("out", nil) }},
 	} {
 		rec := newRecorder(t)
 		var s *Set
@@ -339,8 +342,9 @@ func TestATooPlainValueOrAClashingNameStopsTheTest(t *testing.T) {
 }
 
 // TestNoLineACheckGivesHoldsTheValueOrAnyOfItsEncodings: every line the checks give for a hit in each
-// encoding, and for each refusal, holds no 16 bytes in a row of the value or of any encoding of it,
-// only its name.
+// encoding, for each refusal, for a folder whose files and folders are named with a value, hold it
+// and cannot be read, and for a read that fails with the value in its error and its place, which %q
+// would escape, holds no 16 bytes in a row of the value or of any encoding of it, only its name.
 //
 // What it costs when this fails: a test log a person keeps or shares holds the planted value, or
 // enough of an encoding of it, for a reader to take it for a real secret's shape.
@@ -349,7 +353,7 @@ func TestNoLineACheckGivesHoldsTheValueOrAnyOfItsEncodings(t *testing.T) {
 	rows := encodedRows(t)
 	rec := newRecorder(t)
 	var s *Set
-	if rec.do(func() { s = New(rec); s.Own("key", encodedValue) }) {
+	if rec.do(func() { s = New(rec, "token"); s.Own("key", encodedValue) }) {
 		t.Fatalf("planting: %s", rec.said())
 	}
 	for _, row := range rows {
@@ -357,15 +361,27 @@ func TestNoLineACheckGivesHoldsTheValueOrAnyOfItsEncodings(t *testing.T) {
 			t.Fatalf("%s: %d hits, want 1", row.claim, len(hits))
 		}
 	}
+	if hits := s.Files(namedFolder(t, s)); len(hits) != namedHits {
+		t.Fatalf("Files of a folder named with the token: %d hits, want %d", len(hits), namedHits)
+	}
+	if hits := s.Reader("from "+encodedValue, iotest.ErrReader(errors.New("gone after "+encodedValue))); hits != nil {
+		t.Fatalf("a read that fails: %+v, want no hits", hits)
+	}
 	rec.do(func() { s.Own("again", encodedValue) })
 	said := rec.said()
+	if want := `canary: Reader cannot read "from <key>": gone after <key>`; !strings.Contains(said, want) {
+		t.Fatalf("the checks said %q, want %q", said, want)
+	}
 	if n := strings.Count(said, "canary: the planted \"key\""); n != len(rows) {
 		t.Fatalf("the checks gave %d hit lines, want %d: %q", n, len(rows), said)
 	}
-	for _, row := range rows {
-		for i := 0; i+16 <= len(row.text); i++ {
-			if w := row.text[i : i+16]; strings.Contains(said, w) {
-				t.Errorf("the lines hold %q, 16 bytes of the value as %s:\n%s", w, row.claim, said)
+	if !strings.Contains(said, "canary: Files cannot read") {
+		t.Fatalf("the checks gave no line for the file Files cannot read: %q", said)
+	}
+	for _, nd := range s.needles {
+		for i := 0; i+16 <= len(nd.b); i++ {
+			if w := nd.b[i : i+16]; strings.Contains(said, string(w)) {
+				t.Errorf("the lines hold %q, 16 bytes of %q as %s:\n%s", w, nd.name, nd.encoding, said)
 				break
 			}
 		}
@@ -466,5 +482,77 @@ func TestFilesFollowsNoLink(t *testing.T) {
 	}
 	if said := rec.said(); said != "" {
 		t.Errorf("Files of a folder with links outside said %q, want nothing", said)
+	}
+}
+
+// namedHits is the number of hits Files gives for namedFolder.
+const namedHits = 6
+
+// namedFolder is a folder whose entries are named with the value planted as "token": the file
+// cache/<hex of it>, the folder sessions/<it> with a file in it, the file <it>.lock that holds it and
+// cannot be read, the file <it>.log that holds it after 6 bytes, and the link to-<it> to a folder
+// outside.
+func namedFolder(t *testing.T, s *Set) string {
+	t.Helper()
+	v := s.Get("token")
+	dir, outside := t.TempDir(), t.TempDir()
+	for rel, text := range map[string]string{
+		"cache/" + hex.EncodeToString([]byte(v)): "",
+		"sessions/" + v + "/state.json":          "{}\n",
+		v + ".lock":                              "token " + v + "\n",
+		v + ".log":                               "token " + v + "\n",
+	} {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unreadable(t, filepath.Join(dir, v+".lock"))
+	testkit.Link(t, outside, filepath.Join(dir, "to-"+v))
+	return dir
+}
+
+// TestFilesFindsAValueInAFileOrAFoldersNameAndPrintsItAsTheName: a file, a folder and a link whose
+// name holds a planted value, raw or encoded, are each a hit at InPath whose place has the value as
+// <name>, counted once though the folder's files hold it too; a hit in such a file's bytes, and a
+// file named with it that cannot be read, name the file the same way.
+//
+// What it costs when this fails: a program that names a file or a folder after a token passes its
+// test, or the test's log prints the token as the path of a file the program wrote.
+func TestFilesFindsAValueInAFileOrAFoldersNameAndPrintsItAsTheName(t *testing.T) {
+	t.Parallel()
+	rec := newRecorder(t)
+	var s *Set
+	if rec.do(func() { s = New(rec, "token") }) {
+		t.Fatalf("planting: %s", rec.said())
+	}
+	dir := namedFolder(t, s)
+	inPath := func(place, encoding string) Hit {
+		return Hit{Name: "token", Check: CheckFiles, Place: place, Offset: InPath, Encoding: encoding, Count: 1}
+	}
+	sameHits(t, "a folder named with the token", s.Files(dir), []Hit{
+		inPath("cache/<token>", Hex),
+		inPath("sessions/<token>", Raw),
+		inPath("<token>.lock", Raw),
+		inPath("<token>.log", Raw),
+		{Name: "token", Check: CheckFiles, Place: "<token>.log", Offset: int64(len("token ")), Encoding: Raw, Count: 1},
+		inPath("to-<token>", Raw),
+	})
+	said := rec.said()
+	for _, line := range []string{
+		`canary: the planted "token" is in the path "sessions/<token>" (Files), as raw, once`,
+		`canary: the planted "token" is in the path "cache/<token>" (Files), as hex, once`,
+		`canary: the planted "token" is in "<token>.log" (Files) at byte 6, as raw, once`,
+		fmt.Sprintf("canary: Files cannot read %q under %q: ", "<token>.lock", dir),
+	} {
+		if !strings.Contains(said, line) {
+			t.Errorf("Files of a folder named with the token said %q, want %q", said, line)
+		}
+	}
+	if strings.Contains(said, s.Get("token")) {
+		t.Errorf("Files of a folder named with the token said %q, which holds the token", said)
 	}
 }

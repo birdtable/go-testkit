@@ -3,14 +3,17 @@
 // holds a token or a key is handed the planted values in its place, run, and then checked: every file
 // under its home and log folders, read as raw bytes, so a SQLite file and its -wal and -journal files
 // are covered with no driver; its stdout and stderr; and the String, Error and %+v of a value it
-// returned.
+// returned. Files reads each file's and folder's path below the folder too: a program that names a
+// file or a folder after a token has written it there.
 //
 // Each check looks for each value as it is and re-encoded on the way out: as hex in both cases, as
 // standard and URL-safe base64 at each of the three alignments a value can have in a longer encoded
 // string, as a URL's query and path escaping, and as UTF-16, little and big endian. A hit fails the
 // test with the value's name, the check, the place, the byte offset and the encoding. It never shows
 // the value, any of its encodings, or the bytes around the hit, in a failure or a log, so a test log
-// that is kept or shared holds nothing a reader could take for the real secret's shape.
+// that is kept or shared holds nothing a reader could take for the real secret's shape. A place,
+// a path or an error that holds one is shown with each value or encoding in it replaced by the
+// value's name in angle brackets, <name>.
 //
 // What it does not see:
 //   - A value compressed or encrypted (gzip, a zip archive), or written in an encoding the list above
@@ -40,7 +43,6 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -92,11 +94,15 @@ const (
 type Hit struct {
 	Name     string // the name the value was planted under
 	Check    string // CheckFiles, CheckReader, CheckBytes or CheckValue
-	Place    string // the file's path below the folder, slash-separated, or the place the caller named
-	Offset   int64  // the byte offset of the first hit in the place
+	Place    string // the path below the folder, slash-separated, or the place the caller named, each value in it as <name>
+	Offset   int64  // the byte offset of the first hit in the place, or InPath for a hit in the path itself
 	Encoding string // one of the encodings above
 	Count    int    // how many times the value is in the place in this encoding
 }
+
+// InPath is a Hit's Offset when Files found the value in a file's or folder's path below the folder,
+// not in a file's bytes: the hit is in the last name of Place, or across it and the folders above.
+const InPath = -1
 
 // needle is one encoding of one planted value, the bytes a check looks for.
 type needle struct {
@@ -125,7 +131,7 @@ func New(t testing.TB, names ...string) *Set {
 	for _, name := range names {
 		b := make([]byte, randomBytes)
 		if _, err := rand.Read(b); err != nil {
-			t.Fatalf("canary: New could not read crypto/rand for %q: %v", name, err)
+			s.fatalf("canary: New could not read crypto/rand for %q: %v", name, err)
 		}
 		s.plant("New", name, prefix+hex.EncodeToString(b))
 	}
@@ -141,10 +147,10 @@ func New(t testing.TB, names ...string) *Set {
 func (s *Set) Own(name, value string) {
 	s.t.Helper()
 	if s.checked.Load() {
-		s.t.Fatalf("canary: Own of %q after a check: plant every value before the first check", name)
+		s.fatalf("canary: Own of %q after a check: plant every value before the first check", name)
 	}
 	if why := plain(value); why != "" {
-		s.t.Fatalf("canary: Own refuses the value for %q: %s", name, why)
+		s.fatalf("canary: Own refuses the value for %q: %s", name, why)
 	}
 	s.plant("Own", name, value)
 }
@@ -155,7 +161,7 @@ func (s *Set) Get(name string) string {
 	s.t.Helper()
 	v, ok := s.values[name]
 	if !ok {
-		s.t.Fatalf("canary: Get of %q, which no value was planted under", name)
+		s.fatalf("canary: Get of %q, which no value was planted under", name)
 	}
 	return v
 }
@@ -165,14 +171,14 @@ func (s *Set) Get(name string) string {
 func (s *Set) plant(by, name, value string) {
 	s.t.Helper()
 	if name == "" {
-		s.t.Fatalf("canary: %s was given an empty name", by)
+		s.fatalf("canary: %s was given an empty name", by)
 	}
 	if _, taken := s.values[name]; taken {
-		s.t.Fatalf("canary: %s was given the name %q twice", by, name)
+		s.fatalf("canary: %s was given the name %q twice", by, name)
 	}
 	for _, other := range s.names {
 		if o := s.values[other]; strings.Contains(o, value) || strings.Contains(value, o) {
-			s.t.Fatalf("canary: %s refuses the value for %q: it equals, holds or is held in the value planted as %q", by, name, other)
+			s.fatalf("canary: %s refuses the value for %q: it equals, holds or is held in the value planted as %q", by, name, other)
 		}
 	}
 	s.names = append(s.names, name)
@@ -270,53 +276,78 @@ func lowerEscapes(s string) string {
 // escapeRE matches one % escape.
 func escapeRE() *regexp.Regexp { return regexp.MustCompile(`%[0-9A-F]{2}`) }
 
-// Files checks every regular file under dir, read as raw bytes, and is the hits, nil when it found
-// none. Each hit fails the test. A file it cannot read, and a dir that is missing or no folder, fail
-// the test too, never skipped. It does not follow a symbolic link, nor read a FIFO, a socket or a
-// device.
+// Files checks every regular file under dir, read as raw bytes, and the path below dir of every
+// file and folder, links among them, and is the hits, nil when it found none. Each hit fails the
+// test. A hit in a path is at InPath, counted at the entry whose name it ends in. A file it cannot
+// read, and a dir that is missing or no folder, fail the test too, never skipped. It does not follow
+// a symbolic link, nor read a FIFO, a socket or a device.
 func (s *Set) Files(dir string) []Hit {
 	s.t.Helper()
-	s.checked.Store(true)
+	s.begin(CheckFiles)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		s.t.Errorf("canary: Files cannot read the folder %q: %v", dir, err)
+		s.errorf("canary: Files cannot read the folder %q: %v", dir, err)
 		return nil
 	}
 	defer func() {
 		if err := root.Close(); err != nil {
-			s.t.Errorf("canary: Files cannot close the folder %q: %v", dir, err)
+			s.errorf("canary: Files cannot close the folder %q: %v", dir, err)
 		}
 	}()
 	var hits []Hit
 	walkErr := fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
-			s.t.Errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
+			s.errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
 			return nil
+		}
+		if rel != "." {
+			hits = append(hits, s.inPath(rel)...)
 		}
 		if !d.Type().IsRegular() {
 			return nil
 		}
 		found, err := s.file(root, rel)
 		if err != nil {
-			s.t.Errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
+			s.errorf("canary: Files cannot read %q under %q: %v", rel, dir, err)
 		}
 		hits = append(hits, found...)
 		return nil
 	})
 	if walkErr != nil {
-		s.t.Errorf("canary: Files cannot walk %q: %v", dir, walkErr)
+		s.errorf("canary: Files cannot walk %q: %v", dir, walkErr)
 	}
 	return hits
 }
 
-// file is the hits in the file rel beneath root, reported as Files found them.
+// inPath is the hits in rel, a slash-separated path below the folder, that end past the folders
+// above its last name, whose own entries counted the rest, each at InPath and reported.
+func (s *Set) inPath(rel string) []Hit {
+	s.t.Helper()
+	tl := tally{check: CheckFiles, place: s.redact(rel), index: map[[2]string]int{}}
+	above := max(strings.LastIndexByte(rel, '/'), 0)
+	for _, nd := range s.needles {
+		tl.find(nd, []byte(rel), above)
+	}
+	for i := range tl.hits {
+		tl.hits[i].Offset = InPath
+	}
+	s.report(tl.hits)
+	return tl.hits
+}
+
+// file is the hits in the file rel beneath root, reported as Files found them, none when rel is no
+// longer a regular file by the time it is open.
 func (s *Set) file(root *os.Root, rel string) ([]Hit, error) {
 	s.t.Helper()
-	f, err := root.Open(rel)
+	f, err := root.OpenFile(rel, openFlags, 0)
 	if err != nil {
 		return nil, err
 	}
-	hits, err := s.scan(CheckFiles, filepath.ToSlash(rel), f)
+	var hits []Hit
+	info, err := f.Stat()
+	if err == nil && info.Mode().IsRegular() {
+		hits, err = s.scan(CheckFiles, rel, f)
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -327,10 +358,10 @@ func (s *Set) file(root *os.Root, rel string) ([]Hit, error) {
 // is the hits, nil when it found none. Each hit fails the test, and so does a read that fails.
 func (s *Set) Reader(place string, r io.Reader) []Hit {
 	s.t.Helper()
-	s.checked.Store(true)
+	s.begin(CheckReader)
 	hits, err := s.scan(CheckReader, place, r)
 	if err != nil {
-		s.t.Errorf("canary: Reader cannot read %q: %v", place, err)
+		s.errorf("canary: Reader cannot read %q: %v", place, err)
 	}
 	return hits
 }
@@ -339,10 +370,10 @@ func (s *Set) Reader(place string, r io.Reader) []Hit {
 // hits, nil when it found none. Each hit fails the test.
 func (s *Set) Bytes(place string, b []byte) []Hit {
 	s.t.Helper()
-	s.checked.Store(true)
+	s.begin(CheckBytes)
 	hits, err := s.scan(CheckBytes, place, bytes.NewReader(b))
 	if err != nil {
-		s.t.Errorf("canary: Bytes cannot read %q: %v", place, err)
+		s.errorf("canary: Bytes cannot read %q: %v", place, err)
 	}
 	return hits
 }
@@ -352,7 +383,7 @@ func (s *Set) Bytes(place string, b []byte) []Hit {
 // and the form in brackets. It is the hits, nil when it found none, and each hit fails the test.
 func (s *Set) Value(place string, v any) []Hit {
 	s.t.Helper()
-	s.checked.Store(true)
+	s.begin(CheckValue)
 	type form struct{ name, text string }
 	var forms []form
 	if e, ok := v.(error); ok {
@@ -366,7 +397,7 @@ func (s *Set) Value(place string, v any) []Hit {
 	for _, f := range forms {
 		found, err := s.scan(CheckValue, place+" ("+f.name+")", strings.NewReader(f.text))
 		if err != nil {
-			s.t.Errorf("canary: Value cannot read %q: %v", place, err)
+			s.errorf("canary: Value cannot read %q: %v", place, err)
 		}
 		hits = append(hits, found...)
 	}
@@ -381,7 +412,7 @@ func (s *Set) scan(check, place string, r io.Reader) ([]Hit, error) {
 	tail := max(s.longest-1, 0)
 	buf := make([]byte, tail+s.chunk)
 	kept := 0
-	tl := tally{check: check, place: place, index: map[[2]string]int{}}
+	tl := tally{check: check, place: s.redact(place), index: map[[2]string]int{}}
 	for {
 		n, err := io.ReadFull(r, buf[kept:kept+s.chunk])
 		data := buf[:kept+n]
@@ -442,6 +473,69 @@ func (s *Set) report(hits []Hit) {
 		if h.Count > 1 {
 			times = fmt.Sprintf("%d times", h.Count)
 		}
-		s.t.Errorf("canary: the planted %q is in %q (%s) at byte %d, as %s, %s", h.Name, h.Place, h.Check, h.Offset, h.Encoding, times)
+		if h.Offset == InPath {
+			s.errorf("canary: the planted %q is in the path %q (%s), as %s, %s", h.Name, h.Place, h.Check, h.Encoding, times)
+			continue
+		}
+		s.errorf("canary: the planted %q is in %q (%s) at byte %d, as %s, %s", h.Name, h.Place, h.Check, h.Offset, h.Encoding, times)
 	}
+}
+
+// begin marks that a check has run, so Own refuses after it, and stops the test when no value is
+// planted, as a check of nothing passes whatever the program wrote.
+func (s *Set) begin(check string) {
+	s.t.Helper()
+	s.checked.Store(true)
+	if len(s.names) == 0 {
+		s.fatalf("canary: %s on a Set with no value planted: plant one by New or Own before the first check", check)
+	}
+}
+
+// errorf fails the test with a line that holds no planted value: each string in args, and the line
+// made of them, with every value and encoding in it redacted. The strings are redacted before the
+// line is made, so a %q that escapes a value's bytes cannot spell them out; an error is shown by %v,
+// which does not escape, so the line's own redaction covers it.
+func (s *Set) errorf(format string, args ...any) {
+	s.t.Helper()
+	s.t.Errorf("%s", s.line(format, args))
+}
+
+// fatalf is errorf, and stops the test.
+func (s *Set) fatalf(format string, args ...any) {
+	s.t.Helper()
+	s.t.Fatalf("%s", s.line(format, args))
+}
+
+// line is the line errorf and fatalf give for format and args.
+func (s *Set) line(format string, args []any) string {
+	shown := make([]any, len(args))
+	for i, a := range args {
+		if v, ok := a.(string); ok {
+			a = s.redact(v)
+		}
+		shown[i] = a
+	}
+	return s.redact(fmt.Sprintf(format, shown...))
+}
+
+// redact is text with each needle in it replaced by <name>, the name of its value, the longest
+// needle first where two start at one byte.
+func (s *Set) redact(text string) string {
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		best := -1
+		for k, nd := range s.needles {
+			if (best < 0 || len(nd.b) > len(s.needles[best].b)) && strings.HasPrefix(text[i:], string(nd.b)) {
+				best = k
+			}
+		}
+		if best < 0 {
+			b.WriteByte(text[i])
+			i++
+			continue
+		}
+		b.WriteString("<" + s.needles[best].name + ">")
+		i += len(s.needles[best].b)
+	}
+	return b.String()
 }
