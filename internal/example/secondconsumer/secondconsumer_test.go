@@ -31,7 +31,7 @@ const (
 	childLimit  = 30 * time.Second
 	standIn     = "./internal/example/secondconsumer/sweep" // the consumer's own stand-in, by its folder in the module
 	keyName     = "sc-api-key"                              // the name the consumer plants its own key under
-	badge       = "SCK_4p9Q-Zr7vW2mXk8L"                    // a planted value in the consumer's own format, which New would not make
+	badge       = "tkcanary-sc-badge-0001"                  // a planted value in the consumer's own format, with the canary prefix, which New would not make
 	logPlace    = "sync log"                                // the place the consumer names its captured log
 )
 
