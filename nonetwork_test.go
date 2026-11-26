@@ -202,17 +202,6 @@ func runGuardEnv(t *testing.T, env, wrap []string, mode, addr, refusal string) (
 	return code, lines, stderr.String()
 }
 
-// freePort is a TCP port nothing listened on a moment ago: the kernel's choice for a listener at once closed.
-func freePort(t *testing.T) string {
-	t.Helper()
-	l := listenLoopback(t)
-	_, port, _ := net.SplitHostPort(l.Addr().String())
-	if err := l.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return port
-}
-
 // Planted failure: a refusal that runs the tests anyway, or says nothing of the system, makes the run
 // print "ran" or Main's error miss its words. Risk: a host where the guard holds fails it, as the
 // refusal is forced (forceRefusal) and on Windows is the system's.
@@ -270,9 +259,11 @@ func TestTheProbeFailsAGuardThatHoldsNothing(t *testing.T) {
 	if why := probe(l.Addr().String(), probeRefusal); !strings.Contains(why, "was made, so the guard holds nothing") {
 		t.Errorf("a probe whose connection was made says %q", why)
 	}
-	closed := "127.0.0.1:" + freePort(t)
-	if why := probe(closed, probeRefusal); !strings.Contains(why, "but not with the guard's") {
-		t.Errorf("a probe whose connection was refused by no guard says %q", why)
+	// Port 0 is no port a listener can hold, so its connect fails on every system with an error of
+	// its own (ECONNREFUSED on Linux, EADDRNOTAVAIL on macOS and Windows), never the guard's: a closed
+	// port a moment ago could be a parallel test's listener by the time the probe dials it.
+	if why := probe("127.0.0.1:0", probeRefusal); !strings.Contains(why, "but not with the guard's") {
+		t.Errorf("a probe whose connection failed by no guard says %q", why)
 	}
 }
 
@@ -283,7 +274,7 @@ func TestIsolateGivenNoNetworkReturnsAnErrorAndChangesNothing(t *testing.T) {
 	home := os.Getenv("HOME")
 	for _, opts := range [][]Option{{NoNetwork()}, {Keep("GOWORK"), Options(NoNetwork(hostOS()))}} {
 		restore, err := Isolate(opts...)
-		if err == nil || restore != nil || !strings.Contains(err.Error(), "NoNetwork is an option of Main") {
+		if err == nil || restore != nil || !strings.Contains(err.Error(), "Isolate was given NoNetwork, an option of Main") {
 			if restore != nil {
 				_ = restore()
 			}

@@ -87,11 +87,17 @@ import (
 // seccomp profile outside it; runGuarded takes the caller's uid, which the namespace's root is not; and
 // the docs say guardedFrom is set before the probe, and a child probes again (nonetwork_linux.go, nonetwork.go).
 //
-// Raised by 16 to 6209, by measure, for the release tier's time on macOS: BuildAt reads the test's
+// Raised by 30 to 6223, by measure, for options only Main acts on, refused where they would be ignored:
+// mainOnly, which reads conf's flags and names NoNetwork, Before or RerunEnv, takes the place of Isolate's
+// errIsolateGuard, with the Before and RerunEnv docs saying who refuses them (testkit.go, 21); Build
+// refuses through refusedPkg (binary.go, 4); BuildAt fails the test (buildat.go, 4); and NoNetwork's doc
+// says Build and BuildAt refuse it too (nonetwork.go, 1).
+//
+// Raised by 16 to 6239, by measure, for the release tier's time on macOS: BuildAt reads the test's
 // folder in one place and buildAtIn resolves from a folder it is given, so BuildAt's own tests that
-// need no chdir run in parallel (buildat.go); and modRootOf is modRoot from a given folder, which
-// modRoot and sourceAt share (binary.go).
-const Ceiling = 6209
+// need no chdir run in parallel (buildat.go, 7); and modRootOf is modRoot from a given folder, which
+// modRoot and sourceAt share (binary.go, 9).
+const Ceiling = 6239
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
