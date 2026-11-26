@@ -378,7 +378,7 @@ func (g *gate) baseWork(old string) (env []string, ok bool) {
 		return []string{"GOWORK=off"}, true
 	}
 	rootGoMod, _ := os.ReadFile(filepath.Join(g.path("old"), "go.mod")) //nolint:errcheck // a top with no go.mod is no root to require
-	modGoMod, _ := os.ReadFile(filepath.Join(old, "go.mod"))            //nolint:errcheck // a module with no go.mod requires nothing
+	modGoMod, _ := os.ReadFile(filepath.Join(old, "go.mod"))            //nolint:errcheck,gosec // G304: the base's own go.mod, in the gate's folder; a module with no go.mod requires nothing
 	root := modulePath(rootGoMod)
 	version := required(modGoMod, root)
 	if root == "" || version == "" {
