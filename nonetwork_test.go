@@ -45,6 +45,9 @@ func guardChild(mode, addr, refusal string) int {
 	var opts []Option
 	switch mode {
 	case modeOn, modeInner:
+		if refusal != plain {
+			forceRefusal(refusal) // a seam the guard must hold through, as a host gives it
+		}
 		opts = append(opts, NoNetwork())
 	case modeRefused:
 		forceRefusal(refusal)

@@ -57,7 +57,11 @@ import (
 //
 // Raised by 4 to 6005, by measure, for a guard step's error ending the run: noNetwork takes its step as
 // a parameter, ends the run on any error with a code of 1 or more, and its doc says so (nonetwork.go).
-const Ceiling = 6005
+//
+// Raised by 9 to 6014, by measure, for the guard's interface check on Linux: wayOut counts only the
+// interfaces that are up and names the first way out, a run in another namespace that fails it refuses
+// rather than nest again, and extraInterfaces is the add-only seam its tests use (nonetwork_linux.go).
+const Ceiling = 6014
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.

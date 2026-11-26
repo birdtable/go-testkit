@@ -137,6 +137,7 @@ stderr saying so, and runs them. The refusals:
 | The process already runs in a sandbox | macOS (`sandbox-exec`, an agent's sandboxed shell) | `sandbox_init refused the profile`, and that the process already runs inside a sandbox | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
 | The host refuses an unprivileged user namespace | Linux | `the system refused the namespace` | `TestNoNetworkFailsMainNamingTheSystemWhereTheGuardCannotBeSet` |
 | Loopback does not come up in the new namespace | Linux (Ubuntu's `kernel.apparmor_restrict_unprivileged_userns=1`) | `loopback could not be brought up in the new network namespace` | `TestALoopbackThatWillNotComeUpRefusesTheGuard` |
+| An interface that is up and not loopback is in the tests' new namespace | Linux | `an interface that is not loopback is up in the guard's network namespace`, and its name | `TestAnInterfaceUpBesideTheGuardsLoopbackRefusesNamingIt` |
 | The new namespace is the run's own | Linux | `the new network namespace is the one the run started in` | `TestAGuardLeftInTheRunsNetworkNamespaceRefuses` |
 | The probe's connect was made, or failed some other way | every guarded system | `the probe's connection to 192.0.2.1:9 was made`, or `failed, but not with the guard's` | `TestTheProbeFailsAGuardThatHoldsNothing` |
 | Setting the guard failed with an error, whatever its step said of done | every guarded system | the step's error, and Main's code is 1 or more | `TestAGuardStepThatErrsWithDoneFalseEndsTheRun` |

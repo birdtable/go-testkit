@@ -1,0 +1,3 @@
+kind: Fixed
+body: 'NoNetwork on Linux counts only the interfaces that are up: a tunnel interface a host leaves down in a new network namespace (tunl0, sit0) made the guard start its namespaces again and again until the system ran out of space. A run in the guard''s namespace that sees an interface up and not loopback now refuses, naming it.'
+time: 2026-11-26T10:03:00.000000+01:00

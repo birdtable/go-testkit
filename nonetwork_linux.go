@@ -25,9 +25,10 @@ const probeRefusal = syscall.ENETUNREACH
 // one it starts. It is testkit's own, never a name a caller sets: Isolate keeps it from the tests, and
 // RerunEnv hands it to a child of Rerun. Its value is "init:<uid>:<gid>:<net>" for the root of the new
 // namespaces, or "run:<net>" for the tests, net being the link of the network namespace the run started
-// in (/proc/self/ns/net, "net:[<inode>]"). A stray value decides nothing: a run is guarded only in a
-// network namespace other than that one whose every interface is loopback, and only once the probe
-// passes there; any other run starts the namespaces itself.
+// in (/proc/self/ns/net, "net:[<inode>]"). A stray value never opens the network: a run is guarded only
+// in a network namespace other than that one where every interface that is up is loopback, and only once
+// the probe passes there; a run in another namespace where one is up that is not loopback refuses, naming
+// it, and never starts the namespaces again; any other run starts the namespaces itself.
 const guardVar = "TESTKIT_NONETWORK"
 
 // The parts guardVar names.
@@ -44,11 +45,13 @@ const guardReady = "guarded"
 const netLink = "/proc/self/ns/net"
 
 // The seams of testkit's own tests of a refusal, each written only by them, before Main, and each able
-// only to make the guard fail: guardCloneflags the namespaces the root is made in, and loopbackName the
-// interface it brings up.
+// only to make the guard fail: guardCloneflags the namespaces the root is made in, loopbackName the
+// interface it brings up, and extraInterfaces those wayOut sees beside the system's, which can only add
+// one and so never hide one of the system's.
 var (
-	guardCloneflags uintptr = syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET //nolint:gochecknoglobals // a refusal's test writes flags the system refuses
-	loopbackName            = "lo"                                         //nolint:gochecknoglobals // a refusal's test writes an interface there is none of
+	extraInterfaces []net.Interface                                                //nolint:gochecknoglobals // a test adds an interface the namespace does not hold
+	guardCloneflags uintptr         = syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET //nolint:gochecknoglobals // a refusal's test writes flags the system refuses
+	loopbackName                    = "lo"                                         //nolint:gochecknoglobals // a refusal's test writes an interface there is none of
 )
 
 // guardedFrom is the network namespace this run started in, set once the probe passed in a run that is
@@ -61,7 +64,11 @@ func guardHere(start []string) (code int, done bool, why string, err error) {
 	part, arg, _ := strings.Cut(lookup(start, guardVar), ":")
 	switch part {
 	case guardRun:
-		if here, err := os.Readlink(netLink); err == nil && arg != "" && here != arg && onlyLoopback() {
+		if here, err := os.Readlink(netLink); err == nil && arg != "" && here != arg {
+			// The guard's own namespace, or one like it: its tests run, or refuse, and never nest again.
+			if why := wayOut(); why != "" {
+				return 0, false, why, nil
+			}
 			guardedFrom.Store(&arg)
 			return 0, false, "", nil
 		}
@@ -236,19 +243,21 @@ func loopbackUp(name string) error {
 	return nil
 }
 
-// onlyLoopback is whether every network interface this process sees is a loopback one, as in the
-// namespace the guard made, and none is a way out.
-func onlyLoopback() bool {
+// wayOut is "" where every network interface this process sees that is up is a loopback one, as in the
+// namespace the guard made, and otherwise why not, naming the first that is up and not loopback. One
+// that is down carries nothing: a new network namespace holds the tunnel interfaces of the host's
+// modules (tunl0, sit0, ip6tnl0), down.
+func wayOut() string {
 	ifs, err := net.Interfaces()
-	if err != nil || len(ifs) == 0 {
-		return false
+	if err != nil {
+		return "the interfaces of the guard's network namespace could not be listed: " + err.Error()
 	}
-	for _, i := range ifs {
-		if i.Flags&net.FlagLoopback == 0 {
-			return false
+	for _, i := range append(ifs, extraInterfaces...) {
+		if i.Flags&net.FlagUp != 0 && i.Flags&net.FlagLoopback == 0 {
+			return "an interface that is not loopback is up in the guard's network namespace: " + i.Name
 		}
 	}
-	return true
+	return ""
 }
 
 // withoutGuardVar is environ with guardVar left out.

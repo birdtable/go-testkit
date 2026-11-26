@@ -3,6 +3,7 @@
 package testkit
 
 import (
+	"net"
 	"strings"
 	"syscall"
 	"testing"
@@ -12,6 +13,14 @@ import (
 const (
 	refusalLoopback = "loopback" // an interface there is none of, so the root cannot bring it up
 	refusalSameNet  = "samenet"  // a user namespace with no network namespace: a weakened guard
+	refusalUpLink   = "uplink"   // an interface up and not loopback beside the namespace's own
+	seamDownTunnel  = "tunnel"   // a tunnel interface that is down, as a host's modules leave one: no refusal
+)
+
+// upLink and downTunnel are the interfaces refusalUpLink and seamDownTunnel add to wayOut's.
+const (
+	upLink     = "testkit-up0"
+	downTunnel = "tunl0"
 )
 
 // missingLink is the interface refusalLoopback brings up, which no namespace has.
@@ -25,6 +34,10 @@ func forceRefusal(refusal string) {
 		loopbackName = missingLink
 	case refusalSameNet:
 		guardCloneflags = syscall.CLONE_NEWUSER
+	case refusalUpLink:
+		extraInterfaces = []net.Interface{{Index: 1000, Name: upLink, Flags: net.FlagUp | net.FlagRunning}}
+	case seamDownTunnel:
+		extraInterfaces = []net.Interface{{Index: 1000, Name: downTunnel, Flags: 0}}
 	default:
 		guardCloneflags = syscall.CLONE_THREAD // a flag no clone takes alone: the system refuses it, as it does a user namespace it will not make
 	}
@@ -40,6 +53,8 @@ func refusalWords(refusal string) []string {
 		return []string{"loopback could not be brought up in the new network namespace", missingLink}
 	case refusalSameNet:
 		return []string{"the new network namespace is the one the run started in"}
+	case refusalUpLink:
+		return []string{"an interface that is not loopback is up in the guard's network namespace: " + upLink}
 	}
 	return []string{"the system refused the namespace"}
 }
@@ -105,4 +120,27 @@ func TestOnLinuxAGoLookupUnderNoNetworkFailsAndTheCallersGODEBUGIsKept(t *testin
 	if want := prior + ",netdns=go"; on["godebug"] != want {
 		t.Errorf("under the guard GODEBUG is %q, want the caller's then netdns=go: %q", on["godebug"], want)
 	}
+}
+
+// Planted failure: a check that counts an interface that is down as a way out takes the guard's own
+// namespace, where a host's modules leave tunl0 and sit0 down, for the run's, and nests without end;
+// one that skips the check runs the tests beside a way out. Risk: none past the guard's own.
+func TestATunnelInterfaceThatIsDownLetsTheGuardedRunPass(t *testing.T) {
+	t.Parallel()
+	addr := guardedAddr(t)
+	code, on, stderr := runGuard(t, nil, modeOn, addr, seamDownTunnel)
+	if _, ran := on["ran"]; code != 0 || !ran {
+		t.Fatalf("a guarded run beside a %s that is down ended %d, ran %v, Main's error %q\n%v\n%s", downTunnel, code, ran, on["main error"], on, stderr)
+	}
+	if v := on["dial"]; v == "ok" || !strings.Contains(v, addr) {
+		t.Errorf("beside a %s that is down the guarded dial of %s gave %q, want the guard's error naming it", downTunnel, addr, v)
+	}
+}
+
+// Planted failure: a run in another network namespace that sees an interface up and not loopback, and
+// starts the namespaces again, nests without end or runs beside it; one that says nothing of it leaves
+// the interface unnamed. Risk: none past the guard's own.
+func TestAnInterfaceUpBesideTheGuardsLoopbackRefusesNamingIt(t *testing.T) {
+	t.Parallel()
+	refused(t, refusalUpLink)
 }
