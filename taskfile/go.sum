@@ -1,3 +1,5 @@
+github.com/birdtable/go-testkit v0.4.1-0.20261126014529-ebf77cb0e26a h1:xky7dPm2TmdOqK/FdViWRgfubvDTC6JCP1Kiqy2iWwU=
+github.com/birdtable/go-testkit v0.4.1-0.20261126014529-ebf77cb0e26a/go.mod h1:4NZgsg8gJU/2MwyYv8MyJO9sh2j+rjGyPmcYfVS0Lz8=
 github.com/go-quicktest/qt v1.102.0 h1:HSQxCeh5YZH3EL3W39ixjtyaEhcWSXQHtHnMBzSs474=
 github.com/go-quicktest/qt v1.102.0/go.mod h1:p4lGIVX+8Wa6ZPNDvqcxq36XpUDLh42FLetFU7odllI=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=

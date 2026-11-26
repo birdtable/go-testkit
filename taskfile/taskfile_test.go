@@ -9,7 +9,7 @@ import (
 )
 
 // The tests write a Taskfile.yml, and an exceptions file where a row needs one, in t.TempDir, and read
-// them. The package has no TestMain of testkit's: it starts no process and reads no person's folder.
+// them, under testkit's Main, which TestMain (main_test.go) calls.
 
 // repo writes taskfile, and exceptions where it is not "", into a new folder and gives it.
 func repo(t *testing.T, taskfile, exceptions string) string {
