@@ -1,13 +1,13 @@
 package testkit_test
 
 // A probe, never for merge: what each system answers for an AF_UNIX socket file in a folder.
-// It ends with t.Skip carrying the report, so CI prints it.
+// Under -short it does nothing; in CI's full run it ends with t.Error carrying the report, so the
+// job prints it. The job's name says the system.
 
 import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,22 +18,25 @@ import (
 )
 
 func TestProbeSock(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
-		t.Skip("release tier: a probe of the socket file, which CI's full run prints")
+		return
 	}
 	var b strings.Builder
 	say := func(f string, a ...any) { fmt.Fprintf(&b, f+"\n", a...) }
-	say("PROBE79 %s/%s %s", runtime.GOOS, runtime.GOARCH, runtime.Version())
+	say("PROBE79 %s", runtime.Version())
 	dir, err := os.MkdirTemp("", "p79")
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "s")
 	say("path %q (%d bytes)", path, len(path))
-	l, err := net.Listen("unix", path)
+	var lc net.ListenConfig
+	l, err := lc.Listen(t.Context(), "unix", path)
 	if err != nil {
 		say("listen: %v", err)
-		t.Skip(b.String())
+		t.Error(b.String())
+		return
 	}
 	l.(*net.UnixListener).SetUnlinkOnClose(false)
 	probe := func(when string) {
@@ -41,7 +44,7 @@ func TestProbeSock(t *testing.T) {
 		if err != nil {
 			say("%s lstat: err %v", when, err)
 		} else {
-			say("%s lstat: mode %v type %v regular %v size %d", when, fi.Mode(), fi.Mode().Type(), fi.Mode().IsRegular(), fi.Size())
+			say("%s lstat: mode %v type %v regular %v size %d sys %#v", when, fi.Mode(), fi.Mode().Type(), fi.Mode().IsRegular(), fi.Size(), fi.Sys())
 		}
 		fi, err = os.Stat(path)
 		if err != nil {
@@ -53,14 +56,18 @@ func TestProbeSock(t *testing.T) {
 		go func() {
 			f, err := os.Open(path)
 			if err != nil {
-				var pe *fs.PathError
-				errors.As(err, &pe)
-				done <- fmt.Sprintf("open: err %v (%T, inner %#v)", err, err, pe)
+				var errno interface{ Unwrap() error }
+				inner := error(nil)
+				if errors.As(err, &errno) {
+					inner = errno.Unwrap()
+				}
+				done <- fmt.Sprintf("open: err %v (inner %#v)", err, inner)
 				return
 			}
 			defer f.Close()
+			fi, serr := f.Stat()
 			n, err := f.Read(make([]byte, 16))
-			done <- fmt.Sprintf("open: ok; read: n %d err %v eof %v", n, err, err == io.EOF)
+			done <- fmt.Sprintf("open: ok (f.Stat mode %v err %v); read: n %d err %v eof %v", modeOf(fi), serr, n, err, errors.Is(err, io.EOF))
 		}()
 		select {
 		case s := <-done:
@@ -84,5 +91,12 @@ func TestProbeSock(t *testing.T) {
 	say("removeall: %v", os.RemoveAll(dir))
 	_, err = os.Lstat(dir)
 	say("dir after removeall: %v", err)
-	t.Skip(b.String())
+	t.Error(b.String())
+}
+
+func modeOf(fi os.FileInfo) os.FileMode {
+	if fi == nil {
+		return 0
+	}
+	return fi.Mode()
 }
