@@ -30,14 +30,20 @@ func Socket(t testing.TB, path string) {
 	if err != nil {
 		t.Fatalf("testkit: Socket: the folder to make the socket in: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("testkit: Socket: removing the folder it made the socket in: %v", err)
+		}
+	}()
 	made := filepath.Join(dir, "s")
 	var lc net.ListenConfig
 	l, err := lc.Listen(t.Context(), "unix", made)
 	if err != nil {
 		t.Fatalf("testkit: Socket: the system made no socket at %s: %v", made, err)
 	}
-	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	if ul, ok := l.(*net.UnixListener); ok {
+		ul.SetUnlinkOnClose(false)
+	}
 	if err := l.Close(); err != nil {
 		t.Fatalf("testkit: Socket: closing the socket at %s: %v", made, err)
 	}

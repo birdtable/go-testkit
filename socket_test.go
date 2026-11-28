@@ -30,27 +30,28 @@ func TestSocketPlantsAFileThatIsNotRegularWhoseReadFailsAndThatLeavesWithTheTest
 	if len(path) <= 108 {
 		t.Fatalf("the path %s is %d bytes, within a socket name's limit, so it proves no rename", path, len(path))
 	}
-	t.Run("planted", func(t *testing.T) {
-		Socket(t, path)
-		for name, stat := range map[string]func(string) (fs.FileInfo, error){"Lstat": os.Lstat, "Stat": os.Stat} {
-			fi, err := stat(path)
-			if err != nil || fi.Mode().IsRegular() || fi.Mode().Type() != fs.ModeSocket {
-				t.Errorf("os.%s of the plant: %v, %v; want a socket, not regular", name, modeOrNone(fi), err)
-			}
+	// Registered before Socket's own, so it runs after it: cleanups run last first.
+	t.Cleanup(func() {
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("the plant after its test ended: %v; want it gone", err)
 		}
-		ents, err := os.ReadDir(folder)
-		if err != nil || len(ents) != 1 || ents[0].Type() != fs.ModeSocket {
-			t.Errorf("os.ReadDir of the folder: %v, %v; want the one entry, a socket", ents, err)
-		}
-		if data, err := os.ReadFile(path); err == nil {
-			t.Errorf("os.ReadFile of the plant read %d bytes and no error; want its open refused", len(data))
+		if err := os.Remove(folder); err != nil {
+			t.Errorf("removing the folder that held the plant: %v", err)
 		}
 	})
-	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("the plant after its test ended: %v; want it gone", err)
+	Socket(t, path)
+	for name, stat := range map[string]func(string) (fs.FileInfo, error){"Lstat": os.Lstat, "Stat": os.Stat} {
+		fi, err := stat(path)
+		if err != nil || fi.Mode().IsRegular() || fi.Mode().Type() != fs.ModeSocket {
+			t.Errorf("os.%s of the plant: %v, %v; want a socket, not regular", name, modeOrNone(fi), err)
+		}
 	}
-	if err := os.Remove(folder); err != nil {
-		t.Errorf("removing the folder that held the plant: %v", err)
+	ents, err := os.ReadDir(folder)
+	if err != nil || len(ents) != 1 || ents[0].Type() != fs.ModeSocket {
+		t.Errorf("os.ReadDir of the folder: %v, %v; want the one entry, a socket", ents, err)
+	}
+	if data, err := os.ReadFile(path); err == nil {
+		t.Errorf("os.ReadFile of the plant read %d bytes and no error; want its open refused", len(data))
 	}
 }
 
