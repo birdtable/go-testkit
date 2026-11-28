@@ -195,7 +195,7 @@ import (
 // without it a parser that refuses the filler before the cap passes the side at the cap.
 //
 // Raised by 58 to 7852, by measure, for Socket (socket.go, 58), a plant a consumer's Windows CI
-// asked for (go-testkit-private#79): the package line, the imports and a blank (11); its doc, which
+// asked for: the package line, the imports and a blank (11); its doc, which
 // says what the file is and what a read of it does on each system and why the path may be long
 // (12); the signature, t.Helper and the refusal of a path already taken (5); the short folder under
 // os.TempDir, removed with its error reported, and the listener made in it and closed with the file
