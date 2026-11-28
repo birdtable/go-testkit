@@ -75,7 +75,7 @@ Linux, macOS and Windows alike. A package that cannot call it opts out with a
 
 | Package | What it does |
 |---|---|
-| [`testkit`](https://pkg.go.dev/github.com/birdtable/go-testkit) | Runs a package's tests in an environment of their own, with checks (`NoLeaks`, `NoOpenFiles`, `Isolated`), a bounded rerun (`Rerun`), probes (`Link`, `Modes`, `OtherAccount`) and `Scale` for waits under `-race` and load. |
+| [`testkit`](https://pkg.go.dev/github.com/birdtable/go-testkit) | Runs a package's tests in an environment of their own, with checks (`NoLeaks`, `NoOpenFiles`, `Isolated`), a bounded rerun (`Rerun`), probes (`Link`, `Modes`, `OtherAccount`), plants (`Socket`: a file that is not regular, inside a folder, on every system) and `Scale` for waits under `-race` and load. |
 | [`fake`](https://pkg.go.dev/github.com/birdtable/go-testkit/fake) | Builds a stand-in program that prints, writes, runs and exits as told, the same on every system, in place of a shell script. |
 | [`canary`](https://pkg.go.dev/github.com/birdtable/go-testkit/canary) | Plants fake secrets and fails the test if one reaches a file, a SQLite file, an entry of a zip archive, a log or a returned value, raw or encoded, never printing the value. |
 | [`sizecap`](https://pkg.go.dev/github.com/birdtable/go-testkit/sizecap) | Proves a parser's size cap at its edge: an input of exactly the cap is taken, one byte more is refused with the caller's error, in bounded memory, for any format. |
