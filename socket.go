@@ -2,6 +2,7 @@ package testkit
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
@@ -16,17 +17,18 @@ import (
 // ENXIO on Linux, EOPNOTSUPP on macOS and ERROR_CANT_ACCESS_FILE on Windows. It holds no listener:
 // the socket is closed before Socket returns, and the file stays, so a connect to it is refused.
 //
-// The socket is made in a folder of its own under os.TempDir, whose short path fits the system's
-// limit on a socket's name (104 bytes on macOS, 108 on Linux and Windows), and renamed to path. So
-// path may be as long as the system allows a file, and is on the volume of os.TempDir, as t.TempDir
-// is. t's cleanup removes it, so the folder holding it can be removed once t ends. Something already
-// at path, a folder of path's that is missing, or a socket the system will not make fails t.
+// The socket is made in a folder of its own under os.TempDir and renamed to path. So path may be as
+// long as the system allows a file, and is on the volume of os.TempDir, as t.TempDir is. The socket's
+// path in that folder may not pass SocketPathMax: where os.TempDir is too long for it, t fails naming
+// the limit, before any listen. t's cleanup removes the plant, so the folder holding it can be
+// removed once t ends. Something already at path, a folder of path's that is missing, or a socket
+// the system will not make fails t.
 func Socket(t testing.TB, path string) {
 	t.Helper()
 	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("testkit: Socket: something is at %s already, or it cannot be read (%v)", path, err)
 	}
-	dir, err := os.MkdirTemp("", "")
+	dir, err := socketDir(os.TempDir())
 	if err != nil {
 		t.Fatalf("testkit: Socket: the folder to make the socket in: %v", err)
 	}
@@ -55,4 +57,18 @@ func Socket(t testing.TB, path string) {
 			t.Errorf("testkit: Socket's cleanup: %v", err)
 		}
 	})
+}
+
+// socketDir makes a new folder in root for Socket's socket, named "s" in it, and refuses one where
+// that path would pass SocketPathMax, removing the folder, so the refusal names the limit and not
+// the system's bind error.
+func socketDir(root string) (string, error) {
+	dir, err := os.MkdirTemp(root, "")
+	if err != nil {
+		return "", err
+	}
+	if made := filepath.Join(dir, "s"); len(made) > SocketPathMax {
+		return "", errors.Join(fmt.Errorf("the socket's path %s would be %d bytes, over SocketPathMax (%d): give the system's temporary folder (TMPDIR, or TMP on Windows) a shorter path", made, len(made), SocketPathMax), os.Remove(dir))
+	}
+	return dir, nil
 }

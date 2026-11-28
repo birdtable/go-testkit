@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,66 @@ func TestSocketFailsWhereSomethingIsAtThePathAndLeavesItAsItWas(t *testing.T) {
 	}
 	if data, err := os.ReadFile(path); err != nil || !bytes.Equal(data, []byte("kept")) {
 		t.Errorf("the file at the taken path: %q, %v; want it kept as it was", data, err)
+	}
+}
+
+// TestSocketHoldsNoListenerSoADialToItIsRefused: Socket holds no listener past the call, so a dial
+// to the plant fails. The plant is in ShortDir's folder, so its path is short enough to dial on
+// every system and the dial's failure is the closed socket, not the name's length.
+//
+// What it costs when this fails: a listener held open past the call answers a consumer's connect,
+// and leaves a socket open after the test that a leak check counts.
+func TestSocketHoldsNoListenerSoADialToItIsRefused(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(ShortDir(t), "s")
+	Socket(t, path)
+	var d net.Dialer
+	c, err := d.DialContext(t.Context(), "unix", path)
+	if err == nil {
+		_ = c.Close()
+		t.Errorf("a dial to the plant at %s connected; want it refused, as no listener is held", path)
+	}
+}
+
+// TestSocketFailsWhereAFolderOfThePathIsMissing: Socket at a path whose folder is not there fails
+// the test naming the path, and plants nothing.
+//
+// What it costs when this fails: a plant asked for in a folder the test never made passes the call,
+// and the test goes on to check a file that is not there.
+func TestSocketFailsWhereAFolderOfThePathIsMissing(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "missing", "socket")
+	r := record(t, func(tb testing.TB) {
+		tb.Helper()
+		Socket(tb, path)
+		tb.Error("Socket went on past a path whose folder is missing")
+	})
+	if !strings.Contains(r.failed, path) || strings.Contains(r.failed, "Socket went on") {
+		t.Errorf("Socket at a path whose folder is missing failed with %q; want it naming %s", r.failed, path)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the path after the refusal: %v; want nothing there", err)
+	}
+}
+
+// TestSocketsFolderRefusesARootTooLongForASocketsPathAndLeavesNothing: the folder Socket makes its
+// socket in is refused where the socket's path in it would pass SocketPathMax, naming the limit, and
+// the folder is removed.
+//
+// What it costs when this fails: a consumer whose TMPDIR is long gets the system's bind error, which
+// names no limit, or a folder left behind in its temporary folder at each call.
+func TestSocketsFolderRefusesARootTooLongForASocketsPathAndLeavesNothing(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), strings.Repeat("d", SocketPathMax))
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := socketDir(root)
+	if err == nil || !strings.Contains(err.Error(), "over SocketPathMax") {
+		t.Errorf("socketDir of a root of %d bytes: %q, %v; want a refusal naming SocketPathMax", len(root), dir, err)
+	}
+	if ents, err := os.ReadDir(root); err != nil || len(ents) != 0 {
+		t.Errorf("the root after the refusal: %v, %v; want it empty", ents, err)
 	}
 }
 

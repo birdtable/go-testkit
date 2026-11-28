@@ -194,15 +194,18 @@ import (
 // removable code: the count of bytes read is the one check the ticket did not ask for; it stays, as
 // without it a parser that refuses the filler before the cap passes the side at the cap.
 //
-// Raised by 58 to 7852, by measure, for Socket (socket.go, 58), a plant a consumer's Windows CI
-// asked for: the package line, the imports and a blank (11); its doc, which
-// says what the file is and what a read of it does on each system and why the path may be long
-// (12); the signature, t.Helper and the refusal of a path already taken (5); the short folder under
-// os.TempDir, removed with its error reported, and the listener made in it and closed with the file
-// kept (21); the rename to path (3); and the cleanup (6). Read for removable code: the refusal of a taken path is the one part the
-// ticket did not name; it stays, as os.Rename replaces a file at path on every system without a
-// word, so a plant would overwrite what the test wrote there.
-const Ceiling = 7852
+// Raised by 74 to 7868, by measure, for Socket (socket.go, 74), a plant a consumer's Windows CI
+// asked for: the package line, the imports and a blank (12); its doc, which says what the file is
+// and what a read of it does on each system, why the path may be long and what is refused (13); the
+// signature, t.Helper and the refusal of a path already taken (5); the folder under os.TempDir,
+// removed with its error reported, and the listener made in it and closed with the file kept (21);
+// the rename to path (3); the cleanup (6); and socketDir, which makes that folder and refuses it
+// where the socket's path in it would pass SocketPathMax, with its doc and a blank (14). Read for
+// removable code: the refusal of a taken path and socketDir's check are the two parts the ticket did
+// not name. The first stays, as os.Rename replaces a file at path on every system without a word, so
+// a plant would overwrite what the test wrote there; the second, as without it a long TMPDIR fails
+// at the listen with the system's bind error, which names no limit.
+const Ceiling = 7868
 
 // Count is one module's size: its folder from the repository's top, "." for the root module, and
 // its lines.
